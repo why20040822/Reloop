@@ -15,7 +15,7 @@
 用法：
     cd /Users/ashley/Downloads/ttc的交易系统
     reloop/.venv/bin/python scripts/jd_match_feishu_base.py \
-        --base-token DIIdbR2c8ax8bTsZoNKcnX6enSe \
+        --base-token "$TTC_FEISHU_BASE_TOKEN" \
         --table-id tblWFuBQrPmllE9W \
         --output-dir data/qicheng_feishu_match \
         --top-n 50 \
@@ -735,7 +735,7 @@ def render_html(candidates: List[Dict[str, Any]], spec: JdSpec, output: Path, lo
 async def main_async() -> int:
     load_env()
     parser = argparse.ArgumentParser(description="飞书 Base JD 匹配 + PDF 下载 + 手机号恢复")
-    parser.add_argument("--base-token", default="DIIdbR2c8ax8bTsZoNKcnX6enSe")
+    parser.add_argument("--base-token", default=os.environ.get("TTC_FEISHU_BASE_TOKEN", ""))
     parser.add_argument("--table-id", default="tblWFuBQrPmllE9W")
     parser.add_argument("--view-id", default=None)
     parser.add_argument("--output-dir", default=str(DATA_DIR / "qicheng_feishu_match"))

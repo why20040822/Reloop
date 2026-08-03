@@ -64,7 +64,7 @@
 ## 测试
 
 ```bash
-PYTHONPATH=reloop/src:. python3 -m pytest reloop/tests -q
+cd reloop && python3.12 -m pytest tests -q
 # 当前回归测试数量以命令输出为准
 ```
 
@@ -77,10 +77,10 @@ PYTHONPATH=reloop/src:. python3 -m pytest reloop/tests -q
 
 ## 语法与逻辑审计
 
-- 所有 Python 文件通过 `compileall`
+- Reloop 包与测试通过 `compileall`；仓库外旧目录仍需独立修复后再做全仓门禁
 - 所有 JS 文件通过 `node --check`
 - 历史测试与 outbox/review 故障注入测试全部通过
-- ingestion_log 中无失败记录
+- `ingestion_log` 状态由 outbox worker 镜像；真实生产库无失败记录需在部署后核验
 
 ## 已完成全部 P0-P2 步骤
 

@@ -13,7 +13,7 @@
 用法：
     reloop/.venv/bin/python scripts/sync_feishu_qicheng_top50.py \
         --input data/qicheng_feishu_match/qicheng_top50.json \
-        --base-token DIIdbR2c8ax8bTsZoNKcnX6enSe \
+        --base-token "$TTC_FEISHU_BASE_TOKEN" \
         --table-id tblWFuBQrPmllE9W
 """
 
@@ -21,11 +21,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -144,7 +145,7 @@ def update_record(
 def main() -> int:
     parser = argparse.ArgumentParser(description="同步启承资本 Top50 匹配结果回飞书")
     parser.add_argument("--input", default=str(REPO_ROOT / "data" / "qicheng_feishu_match" / "qicheng_top50.json"))
-    parser.add_argument("--base-token", default="DIIdbR2c8ax8bTsZoNKcnX6enSe")
+    parser.add_argument("--base-token", default=os.environ.get("TTC_FEISHU_BASE_TOKEN", ""))
     parser.add_argument("--table-id", default="tblWFuBQrPmllE9W")
     parser.add_argument("--dry-run", action="store_true", help="只打印，不写入")
     args = parser.parse_args()

@@ -141,15 +141,20 @@ def approve_record(
     _apply_corrections(record, corrections)
 
     store = DeliveryStore()
-    job = _queue_review_payload(store, row, record)
+    try:
+        job = _queue_review_payload(store, row, record)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+
+    feishu_status = "success" if job.feishu_status == "success" else "blocked"
 
     with closing(_db_conn()) as conn:
         conn.execute(
             """
             UPDATE ingestion_log SET
                 fingerprint=?,
-                feishu_record_id=NULL,
-                feishu_write_status='blocked',
+                feishu_record_id=?,
+                feishu_write_status=?,
                 review_status='approved',
                 dry_run_payload=?,
                 name=?,
@@ -161,6 +166,8 @@ def approve_record(
             """,
             (
                 job.fingerprint,
+                job.feishu_record_id,
+                feishu_status,
                 json.dumps({"candidate": record.model_dump(), "job_id": job.id}, ensure_ascii=False),
                 record.name or "",
                 record.phone or "",
@@ -174,8 +181,8 @@ def approve_record(
     return {
         "ok": True,
         "action": "approved",
-        "feishu_record_id": None,
-        "feishu_write_status": "blocked",
+        "feishu_record_id": job.feishu_record_id,
+        "feishu_write_status": feishu_status,
         "job_id": job.id,
         "delivery": "queued",
     }
@@ -192,10 +199,15 @@ def _queue_review_payload(
         payload = json.loads(row["dry_run_payload"] or "{}")
     except (TypeError, ValueError):
         payload = {}
+    canonical_fingerprint = record_fingerprint(record)
     job_id = payload.get("job_id")
-    if isinstance(job_id, int) and store.get(job_id):
-        return store.reset_for_delivery(job_id, record)
-    return store.enqueue(record, fingerprint=row["fingerprint"] or record_fingerprint(record))
+    existing = store.get(job_id) if isinstance(job_id, int) else None
+    if existing:
+        if existing.local_status == "delivered":
+            raise ValueError("该候选人已完成投递，不能原地重新审批；请创建新版本")
+        if existing.fingerprint == canonical_fingerprint:
+            return store.reset_for_delivery(existing.id, record)
+    return store.enqueue(record, fingerprint=canonical_fingerprint)
 
 
 def reject_record(log_id: int, reason: str = "") -> dict[str, Any]:

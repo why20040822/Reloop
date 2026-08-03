@@ -196,6 +196,8 @@ class CandidateRecord(BaseModel):
             "source_url": self.source_url or "",
             "source_type": self.source_type,
             "title": self.original_attachment_path or self.source_url or "",
+            "phone": self.phone or "",
+            "email": self.email or "",
             "location": self.current_location or self.expected_location or "",
             "explicit_age": None,
             "experience_years": None,

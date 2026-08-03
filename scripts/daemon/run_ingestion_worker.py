@@ -1,20 +1,19 @@
 #!/usr/bin/env python3
-"""Run one bounded Reloop outbox delivery batch."""
+"""Run one bounded Reloop outbox delivery batch after package installation."""
 
 from __future__ import annotations
 
-import argparse
-import json
-
-from reloop.ops.worker import run_once
+import shutil
+import subprocess
+import sys
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Reloop ingestion outbox worker")
-    parser.add_argument("--limit", type=int, default=10)
-    args = parser.parse_args()
-    print(json.dumps(run_once(limit=args.limit), ensure_ascii=False, indent=2))
-    return 0
+    executable = shutil.which("reloop-worker")
+    if not executable:
+        print("请先安装 Reloop：python -m pip install -e reloop", file=sys.stderr)
+        return 2
+    return subprocess.call([executable, *sys.argv[1:]])
 
 
 if __name__ == "__main__":

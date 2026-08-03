@@ -12,6 +12,7 @@ excluded automatically.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -26,7 +27,7 @@ class FeishuBaseAdapter:
     def __init__(self, mapping_path: Path | str | None = None, base_token: str | None = None, table_id: str | None = None):
         self.mapping_path = Path(mapping_path) if mapping_path else MAPPING_PATH
         self.mapping = json.loads(self.mapping_path.read_text(encoding="utf-8"))
-        self.base_token = base_token or self.mapping["base_token"]
+        self.base_token = base_token or os.getenv("TTC_FEISHU_BASE_TOKEN", "").strip() or self.mapping.get("base_token", "")
         self.table_id = table_id or self.mapping["table_id"]
 
     def _field_value(self, record: CandidateRecord, spec: dict[str, Any]) -> Any:
@@ -264,7 +265,6 @@ class FeishuBaseAdapter:
                     val = [v.get("file") for v in val] if isinstance(val, list) else val
                 named[spec["name"]] = val
         return {
-            "base_token": self.base_token,
             "table_id": self.table_id,
             "action": "dry_run",
             "candidate_name": record.name,
@@ -273,6 +273,8 @@ class FeishuBaseAdapter:
         }
 
     def _run_cli(self, *args: str, cwd: Path | str | None = None, _attempt: int = 1) -> dict[str, Any]:
+        if not self.base_token:
+            raise RuntimeError("TTC_FEISHU_BASE_TOKEN is required for Feishu operations")
         cmd = ["lark-cli", "base", *args, "--as", "user"]
         result = subprocess.run(
             cmd, capture_output=True, text=True, check=False, cwd=cwd
@@ -424,14 +426,34 @@ class FeishuBaseAdapter:
 
     def _has_search_result(self, resp: dict[str, Any]) -> bool:
         """Return True if a record-search response contains at least one record."""
+        return self._extract_search_record_id(resp) is not None
+
+    @staticmethod
+    def _extract_search_record_id(resp: dict[str, Any]) -> str | None:
+        """Extract the first record ID from known lark-cli search envelopes."""
+
         if not isinstance(resp, dict):
-            return False
+            return None
+        if resp.get("error"):
+            raise RuntimeError("Feishu record search failed")
         data = resp.get("data", {}) or {}
-        total = data.get("total")
-        if total:
-            return True
-        records = data.get("data", [])
-        return bool(records)
+        if isinstance(data, dict):
+            candidates = [data.get("records"), data.get("data")]
+        elif isinstance(data, list):
+            candidates = [data]
+        else:
+            candidates = []
+        for records in candidates:
+            if isinstance(records, list) and records:
+                first = records[0]
+                if isinstance(first, dict):
+                    record_id = first.get("record_id") or first.get("id")
+                    if record_id:
+                        return str(record_id)
+                return "__search_match__"
+        if isinstance(data, dict) and data.get("total"):
+            return "__search_match__"
+        return None
 
     @staticmethod
     def _search_keyword(*parts: str) -> str:
@@ -448,7 +470,7 @@ class FeishuBaseAdapter:
                 return spec["name"]
         return None
 
-    def record_exists(self, record: CandidateRecord) -> bool:
+    def find_record_id(self, record: CandidateRecord) -> str | None:
         """Check whether an equivalent record already exists in the Base.
 
         Uses the formula field ``查重值`` if available, otherwise falls back to
@@ -471,8 +493,9 @@ class FeishuBaseAdapter:
                 "--limit", "1",
                 "--format", "json",
             )
-            if self._has_search_result(resp):
-                return True
+            found = self._extract_search_record_id(resp)
+            if found:
+                return found
         # Strong fallback: name + phone (catches records with empty company).
         if record.name and record.phone and name_field and phone_field:
             resp = self._run_cli(
@@ -485,8 +508,9 @@ class FeishuBaseAdapter:
                 "--limit", "1",
                 "--format", "json",
             )
-            if self._has_search_result(resp):
-                return True
+            found = self._extract_search_record_id(resp)
+            if found:
+                return found
         # Fallback to name + company.
         if record.name and record.current_company and name_field and company_field:
             resp = self._run_cli(
@@ -499,8 +523,9 @@ class FeishuBaseAdapter:
                 "--limit", "1",
                 "--format", "json",
             )
-            if self._has_search_result(resp):
-                return True
+            found = self._extract_search_record_id(resp)
+            if found:
+                return found
         # Last resort: name-only match (useful when company/phone are missing).
         if record.name and name_field:
             resp = self._run_cli(
@@ -512,6 +537,12 @@ class FeishuBaseAdapter:
                 "--limit", "1",
                 "--format", "json",
             )
-            if self._has_search_result(resp):
-                return True
-        return False
+            found = self._extract_search_record_id(resp)
+            if found:
+                return found
+        return None
+
+    def record_exists(self, record: CandidateRecord) -> bool:
+        """Return whether the Base contains an equivalent candidate."""
+
+        return self.find_record_id(record) is not None

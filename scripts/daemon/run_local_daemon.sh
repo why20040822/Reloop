@@ -2,7 +2,6 @@
 set -euo pipefail
 
 APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PORT="${TTC_DAEMON_PORT:-8766}"
 
 cd "$APP_DIR"
 
@@ -12,6 +11,8 @@ if [[ -f "$APP_DIR/.env" ]]; then
   source "$APP_DIR/.env"
   set +a
 fi
+
+PORT="${TTC_DAEMON_PORT:-8766}"
 
 if [[ -f "$APP_DIR/venv/bin/activate" ]]; then
   # shellcheck disable=SC1091
@@ -39,4 +40,4 @@ rm -f /tmp/ttc_port_check.$$
 echo "Starting TTC Daemon on http://127.0.0.1:$PORT"
 echo "Source talent enabled: $TTC_SOURCE_TALENT_ENABLED"
 echo "MySQL host: ${TTC_MYSQL_HOST:-not-set}"
-python3 scripts/daemon/run_ttc_daemon.py
+python3 -m ttc_daemon.main

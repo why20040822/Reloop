@@ -13,10 +13,9 @@ RUN pip install --no-cache-dir --upgrade pip \
     && python -m playwright install chromium
 
 COPY ttc_daemon ./ttc_daemon
-COPY ttc_daemon.py .
 
 RUN mkdir -p /data
 
 EXPOSE 8766
 
-CMD ["python", "ttc_daemon.py"]
+CMD ["python", "-m", "ttc_daemon.main"]

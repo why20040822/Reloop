@@ -10,13 +10,13 @@ Keeps the oldest record for each name and deletes newer duplicates.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
-from pathlib import Path
 from typing import Any
 
 import argparse
 
-BASE_TOKEN = "DIIdbR2c8ax8bTsZoNKcnX6enSe"
+BASE_TOKEN = os.environ.get("TTC_FEISHU_BASE_TOKEN", "")
 TABLE_ID = "tblWFuBQrPmllE9W"
 
 

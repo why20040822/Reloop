@@ -23,4 +23,4 @@ ENV TTC_DATA_DIR=/data
 
 EXPOSE 8766
 
-CMD ["python3", "ttc_daemon.py"]
+CMD ["python3", "-m", "ttc_daemon.main"]

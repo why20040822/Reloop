@@ -7,6 +7,7 @@ RDS and the Feishu projection in that order; dry-run previews the payload only.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from contextlib import closing
 from pathlib import Path
@@ -17,6 +18,8 @@ from reloop.domain.models import CandidateRecord
 from reloop.ingestion.delivery import DeliveryStore
 from reloop.parsing.unified_parser import parse_resume_file, parse_resume_text
 from reloop.sinks.feishu.feishu_base import FeishuBaseAdapter
+
+logger = logging.getLogger(__name__)
 
 
 def _db_conn() -> sqlite3.Connection:
@@ -194,13 +197,17 @@ def ingest_file(
 
     adapter = FeishuBaseAdapter()
 
-    if check_feishu_exists and adapter.record_exists(record):
-        return {
-            "ok": True,
-            "action": "skipped_duplicate_feishu",
-            "candidate": record.model_dump(),
-            "fingerprint": fingerprint,
-        }
+    if check_feishu_exists:
+        try:
+            if adapter.record_exists(record):
+                return {
+                    "ok": True,
+                    "action": "skipped_duplicate_feishu",
+                    "candidate": record.model_dump(),
+                    "fingerprint": fingerprint,
+                }
+        except Exception:
+            logger.warning("Feishu duplicate check failed; continuing with local outbox", exc_info=True)
 
     if dry_run:
         payload = adapter.dry_run(record)

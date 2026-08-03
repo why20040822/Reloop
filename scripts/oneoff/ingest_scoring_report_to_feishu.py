@@ -22,12 +22,13 @@ from typing import Any
 
 import pdfplumber
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
 from reloop.sinks.feishu.feishu_base import FeishuBaseAdapter
 from reloop.sinks.feishu.feishu_reader import FeishuBaseReader
+from reloop.ingestion.delivery import DeliveryStore
 from reloop.ingestion.pipeline import init_ingestion_tables, record_fingerprint
 from reloop.domain.models import CandidateRecord, Education
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def normalize_phone(value: str | None) -> str:
@@ -134,6 +135,7 @@ def _record_to_log(
     feishu_record_id: str | None = None,
     status: str = "dry_run",
     error: str | None = None,
+    job_id: int | None = None,
 ) -> None:
     """Persist the result of processing a scoring report row to the local ingestion log."""
     import sqlite3
@@ -142,6 +144,8 @@ def _record_to_log(
     DB_PATH = REPO_ROOT / "reloop" / "data" / "candidates.db"
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload: dict[str, Any] = {"candidate": record.model_dump()}
+    if job_id is not None:
+        payload["job_id"] = job_id
     if error:
         payload["error"] = error
     with closing(sqlite3.connect(DB_PATH)) as conn:
@@ -231,8 +235,6 @@ def row_to_candidate(row: list[str], source_path: Path) -> CandidateRecord:
     name = row[1]
     company = row[2]
     title = row[3]
-    age = row[4]
-    years = row[5]
     location = row[6]
     education_text = row[7]
     # row[8] is usually "附件"
@@ -337,14 +339,13 @@ def ingest_report(args: argparse.Namespace) -> int:
                 continue
 
             if args.write:
-                result = adapter.create_record(record)
-                record_id = _extract_record_id(result)
+                job = DeliveryStore().enqueue(record, fingerprint=fingerprint)
                 stats["created"] += 1
                 item["ok"] = True
-                item["action"] = "created"
-                item["feishu_record_id"] = record_id
-                _record_to_log(record, fingerprint, feishu_record_id=record_id, status="success")
-                print(f"[{idx}/{len(rows)}] CREATED {record_id}: {record.name}")
+                item["action"] = "queued"
+                item["job_id"] = job.id
+                _record_to_log(record, fingerprint, status="blocked", job_id=job.id)
+                print(f"[{idx}/{len(rows)}] QUEUED job {job.id}: {record.name}")
             else:
                 payload = adapter.dry_run(record)
                 item["ok"] = True

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -30,6 +31,8 @@ class RdsSink(Protocol):
 class FeishuSink(Protocol):
     def create_record(self, record: CandidateRecord) -> dict[str, Any]: ...
 
+    def find_record_id(self, record: CandidateRecord) -> str | None: ...
+
 
 @dataclass(frozen=True)
 class DeliveryJob:
@@ -41,7 +44,12 @@ class DeliveryJob:
     feishu_status: str
     feishu_record_id: str | None
     attempts: int
+    lease_token: str | None
     last_error: str | None
+
+
+class LeaseLostError(RuntimeError):
+    """Raised when a stale worker tries to update a reclaimed job."""
 
 
 class DeliveryStore:
@@ -84,6 +92,8 @@ class DeliveryStore:
             columns = {row["name"] for row in connection.execute("PRAGMA table_info(ingestion_jobs)")}
             if "lease_until" not in columns:
                 connection.execute("ALTER TABLE ingestion_jobs ADD COLUMN lease_until REAL")
+            if "lease_token" not in columns:
+                connection.execute("ALTER TABLE ingestion_jobs ADD COLUMN lease_token TEXT")
             connection.commit()
 
     @staticmethod
@@ -96,6 +106,10 @@ class DeliveryStore:
         ``INSERT OR IGNORE`` plus a read-back means retries and duplicate source
         submissions always share the same durable job.
         """
+
+        canonical_fingerprint = record.fingerprint()
+        if fingerprint != canonical_fingerprint:
+            raise ValueError("outbox fingerprint must match CandidateRecord.fingerprint()")
 
         now = _now()
         with closing(self._conn()) as connection:
@@ -139,6 +153,7 @@ class DeliveryStore:
         claimed: list[DeliveryJob] = []
         now = datetime.now(UTC).timestamp()
         lease_until = now + max(1, lease_seconds)
+        lease_token = uuid.uuid4().hex
         with closing(self._conn()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             rows = connection.execute(
@@ -160,8 +175,8 @@ class DeliveryStore:
                 connection.execute(
                     """UPDATE ingestion_jobs
                        SET local_status = 'processing', attempts = attempts + 1,
-                           lease_until = ?, updated_at = ? WHERE id = ?""",
-                    (lease_until, _now(), row["id"]),
+                           lease_until = ?, lease_token = ?, updated_at = ? WHERE id = ?""",
+                    (lease_until, lease_token, _now(), row["id"]),
                 )
             connection.commit()
             for row in rows:
@@ -180,7 +195,7 @@ class DeliveryStore:
                 """UPDATE ingestion_jobs SET
                    payload_json=?, local_status='queued', cloud_status='blocked',
                    feishu_status='blocked', feishu_record_id=NULL, attempts=0,
-                   lease_until=NULL, last_error=NULL, updated_at=?
+                   lease_until=NULL, lease_token=NULL, last_error=NULL, updated_at=?
                    WHERE id=?""",
                 (self._payload(record), _now(), job_id),
             )
@@ -190,15 +205,16 @@ class DeliveryStore:
             raise KeyError(f"unknown delivery job {job_id}")
         return job
 
-    def mark_cloud_success(self, job_id: int) -> None:
+    def mark_cloud_success(self, job_id: int, lease_token: str | None = None) -> None:
         self._update(
             job_id,
             cloud_status="success",
             feishu_status="pending",
             last_error=None,
+            _lease_token=lease_token,
         )
 
-    def mark_cloud_failure(self, job_id: int, error: str) -> None:
+    def mark_cloud_failure(self, job_id: int, error: str, lease_token: str | None = None) -> None:
         self._update(
             job_id,
             local_status="retry",
@@ -206,9 +222,11 @@ class DeliveryStore:
             feishu_status="blocked",
             lease_until=None,
             last_error=error,
+            _lease_token=lease_token,
+            _clear_lease_token=True,
         )
 
-    def mark_feishu_success(self, job_id: int, record_id: str | None) -> None:
+    def mark_feishu_success(self, job_id: int, record_id: str | None, lease_token: str | None = None) -> None:
         self._update(
             job_id,
             local_status="delivered",
@@ -217,9 +235,11 @@ class DeliveryStore:
             feishu_record_id=record_id,
             lease_until=None,
             last_error=None,
+            _lease_token=lease_token,
+            _clear_lease_token=True,
         )
 
-    def mark_feishu_failure(self, job_id: int, error: str) -> None:
+    def mark_feishu_failure(self, job_id: int, error: str, lease_token: str | None = None) -> None:
         self._update(
             job_id,
             local_status="retry",
@@ -227,17 +247,28 @@ class DeliveryStore:
             feishu_status="failed",
             lease_until=None,
             last_error=error,
+            _lease_token=lease_token,
+            _clear_lease_token=True,
         )
 
     def _update(self, job_id: int, **values: Any) -> None:
+        lease_token = values.pop("_lease_token", None)
+        if values.pop("_clear_lease_token", False):
+            values["lease_token"] = None
         values["updated_at"] = _now()
         columns = ", ".join(f"{key} = ?" for key in values)
         with closing(self._conn()) as connection:
-            connection.execute(
-                f"UPDATE ingestion_jobs SET {columns} WHERE id = ?",
-                (*values.values(), job_id),
-            )
+            where = "id = ?"
+            params: list[Any] = [*values.values(), job_id]
+            if lease_token is not None:
+                where += " AND lease_token = ?"
+                params.append(lease_token)
+            updated = connection.execute(
+                f"UPDATE ingestion_jobs SET {columns} WHERE {where}", params
+            ).rowcount
             connection.commit()
+        if lease_token is not None and updated != 1:
+            raise LeaseLostError(f"lease lost for delivery job {job_id}")
 
     @staticmethod
     def _to_job(row: sqlite3.Row) -> DeliveryJob:
@@ -250,6 +281,7 @@ class DeliveryStore:
             feishu_status=row["feishu_status"],
             feishu_record_id=row["feishu_record_id"],
             attempts=row["attempts"],
+            lease_token=row["lease_token"] if "lease_token" in row.keys() else None,
             last_error=row["last_error"],
         )
 
@@ -267,23 +299,60 @@ def deliver_once(job: DeliveryJob, store: DeliveryStore, rds: RdsSink, feishu: F
         try:
             rds.upsert_candidate(record)
         except Exception as exc:
-            store.mark_cloud_failure(job.id, str(exc))
+            try:
+                store.mark_cloud_failure(job.id, _safe_error(exc), job.lease_token)
+            except LeaseLostError:
+                return store.get(job.id) or job
             return store.get(job.id) or job
-        store.mark_cloud_success(job.id)
+        try:
+            store.mark_cloud_success(job.id, job.lease_token)
+        except LeaseLostError:
+            return store.get(job.id) or job
 
     current = store.get(job.id) or job
     if current.feishu_status != "success":
         try:
+            find_record_id = getattr(feishu, "find_record_id", None)
+            if callable(find_record_id):
+                existing_record_id = find_record_id(record)
+                if existing_record_id and existing_record_id != "__search_match__":
+                    try:
+                        store.mark_feishu_success(job.id, existing_record_id, job.lease_token)
+                    except LeaseLostError:
+                        return store.get(job.id) or job
+                    return store.get(job.id) or job
             response = feishu.create_record(record)
             record_id = _extract_record_id(response)
         except Exception as exc:
-            store.mark_feishu_failure(job.id, str(exc))
+            try:
+                store.mark_feishu_failure(job.id, _safe_error(exc), job.lease_token)
+            except LeaseLostError:
+                return store.get(job.id) or job
             return store.get(job.id) or job
         if not record_id:
-            store.mark_feishu_failure(job.id, f"Feishu response has no record_id: {response}")
+            try:
+                store.mark_feishu_failure(
+                    job.id,
+                    "Feishu response did not return a record_id",
+                    job.lease_token,
+                )
+            except LeaseLostError:
+                return store.get(job.id) or job
             return store.get(job.id) or job
-        store.mark_feishu_success(job.id, record_id)
+        try:
+            store.mark_feishu_success(job.id, record_id, job.lease_token)
+        except LeaseLostError:
+            return store.get(job.id) or job
     return store.get(job.id) or job
+
+
+def _safe_error(error: Exception) -> str:
+    """Persist a bounded, non-payload error summary in the local outbox."""
+
+    summary = f"{type(error).__name__}: {error}"
+    for secret in ("Authorization", "Bearer", "--base-token", "RDS_PASSWORD"):
+        summary = summary.replace(secret, "[redacted]")
+    return summary[:1000]
 
 
 def _extract_record_id(response: dict[str, Any]) -> str | None:
@@ -301,4 +370,4 @@ def _extract_record_id(response: dict[str, Any]) -> str | None:
     return None
 
 
-__all__ = ["DeliveryJob", "DeliveryStore", "deliver_once"]
+__all__ = ["DeliveryJob", "DeliveryStore", "LeaseLostError", "deliver_once"]

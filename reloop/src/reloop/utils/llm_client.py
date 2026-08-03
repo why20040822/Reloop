@@ -39,9 +39,34 @@ def _export(name: str) -> Any:
 
 chat_completion = _export("chat_completion")
 complete = _export("complete")
-complete_with_image = _export("complete_with_image")
 image_to_data_url = _export("image_to_data_url")
 parse_json_safe = _export("parse_json_safe")
+
+
+def complete_with_image(
+    prompt: str,
+    image_path: str | Path,
+    model: str | None = None,
+    json_mode: bool = False,
+    temperature: float = 0.3,
+) -> str | None:
+    """Use the shared vision helper when available, otherwise fall back cleanly.
+
+    Older shared clients predate the vision helper.  Importing Reloop must not
+    fail in that environment; the parser already treats a ``None`` response as
+    an unavailable optional OCR/LLM enhancement.
+    """
+
+    helper = getattr(_client_module, "complete_with_image", None)
+    if helper is None:
+        return None
+    return helper(
+        prompt,
+        image_path,
+        model=model,
+        json_mode=json_mode,
+        temperature=temperature,
+    )
 
 __all__ = [
     "chat_completion",

@@ -17,13 +17,19 @@ python3.12 -m pip install -e '.[dev]'
 ./run.sh
 ```
 
-或指定其他 Python 解释器：
+也可以通过 `TTC_PYTHON` 指定已安装项目依赖的 Python 3.12 解释器：
 
 ```bash
-TTC_PYTHON=python3.11 ./run.sh
+TTC_PYTHON=python3.12 ./run.sh
 ```
 
 打开 <http://127.0.0.1:8765>。
+
+### API 安全配置
+
+本地回环开发可不设置 token；只要通过反向代理、局域网或公网访问，必须设置
+`RELOOP_API_TOKEN`，请求使用 `Authorization: Bearer <token>`。跨源访问仅在
+`RELOOP_CORS_ORIGINS` 明确列出来源时开启。不要把 token 写入映射 JSON、日志或 dry-run 输出。
 
 ### PaddleOCR 启用说明
 
@@ -204,14 +210,15 @@ reloop/extension/parsers/
 
 ```bash
 cd reloop
-python3 -m pytest
+python3.12 -m pytest tests -q
 ```
 
 ### Outbox worker
 
 ```bash
 cd ..
-PYTHONPATH=reloop/src python3 scripts/daemon/run_ingestion_worker.py --limit 10
+python3.12 -m pip install -e reloop
+reloop-worker --limit 10
 ```
 
 The worker fails closed when RDS is not configured. Feishu remains `blocked`

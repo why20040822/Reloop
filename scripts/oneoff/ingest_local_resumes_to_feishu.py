@@ -15,15 +15,16 @@ Workflow:
 
 Examples:
     # Preview what would be imported without touching the Base
-    python scripts/ingest_local_resumes_to_feishu.py --resume-dir ../简历数据 --limit 10
+    python scripts/oneoff/ingest_local_resumes_to_feishu.py --resume-dir ../简历数据 --limit 10
 
     # Actually import after preview looks good
-    python scripts/ingest_local_resumes_to_feishu.py --resume-dir ../简历数据 --write --limit 50
+    python scripts/oneoff/ingest_local_resumes_to_feishu.py --resume-dir ../简历数据 --write --limit 50
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sqlite3
 import sys
 import time
@@ -31,17 +32,17 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-# Make reloop modules importable when running from repo root.
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
 from reloop.sinks.feishu.feishu_base import FeishuBaseAdapter
 from reloop.sinks.feishu.feishu_reader import FeishuBaseReader
+from reloop.ingestion.delivery import DeliveryStore
 from reloop.ingestion.pipeline import DB_PATH, init_ingestion_tables, local_duplicate_exists, record_fingerprint
 from reloop.domain.models import CandidateRecord
 from reloop.parsing.unified_parser import parse_resume_file
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-DEFAULT_SOURCE_BASE_TOKEN = "DIIdbR2c8ax8bTsZoNKcnX6enSe"
+
+DEFAULT_SOURCE_BASE_TOKEN = os.getenv("TTC_SOURCE_BASE_TOKEN", "")
 DEFAULT_SOURCE_TABLE_ID = "tblyT3bebRJsyHar"
 DEFAULT_SOURCE_VIEW_ID = "vewirJbTf2"
 
@@ -64,9 +65,12 @@ def _record_to_log(
     feishu_record_id: str | None = None,
     status: str = "dry_run",
     error: str | None = None,
+    job_id: int | None = None,
 ) -> None:
     """Persist the result of processing a resume to the local ingestion log."""
     payload: dict[str, Any] = {"candidate": record.model_dump()}
+    if job_id is not None:
+        payload["job_id"] = job_id
     if error:
         payload["error"] = error
     with closing(_db_conn()) as conn:
@@ -168,7 +172,6 @@ def load_target_dedup_index(adapter: FeishuBaseAdapter) -> dict[str, list[dict[s
     """
     print(f"[INFO] Reading target base for local dedup: {adapter.base_token}/{adapter.table_id}")
     reader = FeishuBaseReader(base_token=adapter.base_token, table_id=adapter.table_id)
-    field_names = {spec["name"] for spec in adapter.mapping["fields"].values() if spec.get("type") == "text"}
     candidate_field_map = {
         spec["name"]: spec.get("candidate_field")
         for spec in adapter.mapping["fields"].values()
@@ -380,14 +383,13 @@ def ingest_batch(args: argparse.Namespace) -> int:
                     print(f"[{idx}/{len(files)}] SKIP target dup ({target_dup.get('by')}): {path.name}")
                     report.append(item)
                     continue
-                result = adapter.create_record(record)
-                record_id = _extract_record_id(result)
+                job = DeliveryStore().enqueue(record, fingerprint=fingerprint)
                 stats["created"] += 1
                 item["ok"] = True
-                item["action"] = "created"
-                item["feishu_record_id"] = record_id
-                _record_to_log(record, fingerprint, feishu_record_id=record_id, status="success")
-                print(f"[{idx}/{len(files)}] CREATED {record_id}: {path.name}")
+                item["action"] = "queued"
+                item["job_id"] = job.id
+                _record_to_log(record, fingerprint, status="blocked", job_id=job.id)
+                print(f"[{idx}/{len(files)}] QUEUED job {job.id}: {path.name}")
             else:
                 payload = adapter.dry_run(record)
                 stats["dry_run"] += 1

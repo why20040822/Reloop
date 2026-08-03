@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import json
 import re
+import socket
 import sqlite3
 import urllib.error
 import urllib.parse
@@ -36,7 +38,7 @@ from reloop.config import DATA_DIR, PROJECT_ROOT
 from reloop.domain import jd_aligned
 from reloop.domain.models import CandidateRecord, Education, WorkExperience
 from reloop.ingestion.delivery import DeliveryStore
-from reloop.ingestion.pipeline import ingest_file, ingest_text
+from reloop.ingestion.pipeline import _enqueue_for_delivery, ingest_file, ingest_text
 from reloop.ingestion.review import _apply_corrections, review_detail, review_queue
 from reloop.ingestion.review import approve_record as review_approve_record
 from reloop.ingestion.review import reject_record as review_reject_record
@@ -501,8 +503,40 @@ def parse_candidate(payload: CapturePayload) -> dict[str, Any]:
     }
 
 
+def _legacy_record_to_canonical(
+    parsed: dict[str, Any],
+    payload: CapturePayload,
+    attachment_path: str | None,
+) -> CandidateRecord:
+    """Convert the legacy response shape before committing the outbox job."""
+
+    education = parsed.get("education") or {}
+    experiences = parsed.get("experiences") or []
+    return CandidateRecord(
+        name=parsed.get("name") or None,
+        phone=parsed.get("phone") or None,
+        email=parsed.get("email") or None,
+        current_company=parsed.get("current_company") or None,
+        current_title=parsed.get("current_role") or None,
+        current_location=parsed.get("location") or None,
+        employment_status=parsed.get("employment_status") or None,
+        expected_salary=parsed.get("expected_salary") or None,
+        school=parsed.get("undergraduate_school") or None,
+        education=Education(**education) if isinstance(education, dict) and education else None,
+        work_experiences=[WorkExperience(**item) for item in experiences if isinstance(item, dict)],
+        raw_text=parsed.get("raw_text") or "",
+        source_platform=parsed.get("platform") or payload.platform or "legacy_api",
+        source_url=parsed.get("source_url") or payload.url or None,
+        source_type=parsed.get("source_type") or payload.source_type or "legacy_api",
+        captured_at=payload.captured_at,
+        original_attachment_path=attachment_path,
+    )
+
+
 def save_candidate(payload: CapturePayload, attachment_path: str | None = None) -> dict[str, Any]:
     record = parse_candidate(payload)
+    canonical = _legacy_record_to_canonical(record, payload, attachment_path)
+    _enqueue_for_delivery(canonical, canonical.fingerprint())
     stable = (
         f"url|{record['source_url']}"
         if record["source_url"]
@@ -616,14 +650,60 @@ def reprocess_existing() -> None:
         conn.commit()
 
 
+def _blocked_ip(value: str) -> bool:
+    try:
+        address = ipaddress.ip_address(value)
+    except ValueError:
+        return False
+    return any((
+        address.is_private,
+        address.is_loopback,
+        address.is_link_local,
+        address.is_reserved,
+        address.is_multicast,
+        address.is_unspecified,
+        not address.is_global,
+    ))
+
+
 def validate_public_url(value: str) -> str:
     parsed = urllib.parse.urlparse(value)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise HTTPException(400, "请提供有效的 http/https 公开链接")
-    host = (parsed.hostname or "").lower()
-    if host in {"localhost", "127.0.0.1", "::1"} or host.startswith("10.") or host.startswith("192.168."):
+    if parsed.username or parsed.password:
+        raise HTTPException(400, "链接不能包含用户名或密码")
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise HTTPException(400, "链接端口无效") from exc
+    if port not in {None, 80, 443}:
+        raise HTTPException(400, "只允许 HTTP/HTTPS 默认端口")
+    host = (parsed.hostname or "").rstrip(".").lower()
+    if not host or host == "localhost" or host.endswith(".local") or _blocked_ip(host):
+        raise HTTPException(400, "不允许访问本地或内网地址")
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)}
+    except socket.gaierror as exc:
+        raise HTTPException(400, "链接域名无法解析") from exc
+    if not addresses or any(_blocked_ip(address) for address in addresses):
         raise HTTPException(400, "不允许访问本地或内网地址")
     return value
+
+
+class _PublicRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Validate every redirect target instead of trusting the first URL."""
+
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: Any,
+        code: int,
+        msg: str,
+        headers: Any,
+        newurl: str,
+    ):
+        validate_public_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
 def row_to_feishu_message(row: sqlite3.Row) -> dict[str, Any]:
@@ -771,7 +851,7 @@ def feishu_web_bridge_script() -> FileResponse:
 
 
 def health() -> dict[str, Any]:
-    return {"ok": True, "service": "reloop", "database": str(DB_PATH)}
+    return {"ok": True, "service": "reloop", "version": "0.1.0"}
 
 
 
@@ -882,7 +962,8 @@ def import_url(payload: UrlPayload) -> dict[str, Any]:
         raise HTTPException(400, "登录型招聘网站请使用 Chrome 扩展读取当前已授权页面，不能使用公开URL导入。")
     request = urllib.request.Request(url, headers={"User-Agent": "TTC-CandidateCollector/0.1 (+authorized-public-pages-only)"})
     try:
-        with urllib.request.urlopen(request, timeout=20) as response:
+        opener = urllib.request.build_opener(_PublicRedirectHandler())
+        with opener.open(request, timeout=20) as response:
             raw = response.read(3_000_000)
             content_type = response.headers.get_content_charset() or "utf-8"
     except (urllib.error.URLError, TimeoutError) as exc:
@@ -980,14 +1061,30 @@ def import_local_download(payload: LocalDownloadPayload) -> dict[str, Any]:
 
 
 
+def _safe_ingest_path(raw_path: str) -> Path:
+    path = Path(raw_path).expanduser().resolve()
+    allowed_roots = {
+        ROOT.resolve(),
+        DATA_DIR.resolve(),
+        (Path.home() / "Downloads").resolve(),
+    }
+    if not any(path == root or root in path.parents for root in allowed_roots):
+        raise HTTPException(400, "只允许导入项目、数据或 Downloads 目录中的文件")
+    if not path.is_file():
+        raise HTTPException(404, "文件不存在")
+    if path.stat().st_size > MAX_FILE:
+        raise HTTPException(413, "文件超过 12MB")
+    if path.suffix.lower() not in {".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"}:
+        raise HTTPException(415, "只支持 PDF、DOC、DOCX 或图片")
+    return path
+
+
 def ingest_v2_file(payload: IngestFilePayload) -> dict[str, Any]:
     """New ingestion pipeline: parse local file and write to Feishu Base.
 
     Default is dry-run; set dry_run=false to actually create a Base record.
     """
-    path = Path(payload.path).expanduser().resolve()
-    if not path.is_file():
-        raise HTTPException(404, "文件不存在")
+    path = _safe_ingest_path(payload.path)
     return ingest_file(
         path,
         dry_run=payload.dry_run,
@@ -1292,7 +1389,15 @@ def review_v1_approve_endpoint(candidate_id: int, corrections: ReviewCorrections
     record = _candidate_v1_to_record(row)
     _apply_corrections(record, corrections.model_dump(exclude_unset=True))
 
-    job = DeliveryStore().enqueue(record, fingerprint=record.fingerprint())
+    store = DeliveryStore()
+    existing = store.get_by_fingerprint(record.fingerprint())
+    if existing and existing.local_status == "delivered":
+        raise HTTPException(409, "该候选人已完成投递，不能原地重新审批；请创建新版本")
+    job = (
+        store.reset_for_delivery(existing.id, record)
+        if existing
+        else store.enqueue(record, fingerprint=record.fingerprint())
+    )
 
     with closing(db()) as conn:
         _update_candidates_table_from_record(conn, candidate_id, record)

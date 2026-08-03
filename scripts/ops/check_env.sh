@@ -2,7 +2,7 @@
 # Verify Aliyun / Feishu / Source talent / Daemon connectivity.
 set -e
 
-APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$APP_DIR"
 
 if [[ -f "$APP_DIR/.env" ]]; then
@@ -10,6 +10,8 @@ if [[ -f "$APP_DIR/.env" ]]; then
   source "$APP_DIR/.env"
   set +a
 fi
+
+PORT="${TTC_DAEMON_PORT:-8766}"
 
 if [[ -f "$HOME/.ttc/mysql.env" ]]; then
   set -a
@@ -30,8 +32,8 @@ LARKSUITE_CLI_NO_UPDATE_NOTIFIER=1 LARKSUITE_CLI_NO_SKILLS_NOTIFIER=1 lark-cli a
 
 echo ""
 echo "=== Source Talent ==="
-curl -s --noproxy "*" "http://127.0.0.1:8766/admin/source-talent" | python3 -m json.tool || echo "❌ Daemon not running"
+curl -s --noproxy "*" "http://127.0.0.1:$PORT/admin/source-talent" | python3 -m json.tool || echo "❌ Daemon not running"
 
 echo ""
 echo "=== Daemon Health ==="
-curl -s --noproxy "*" "http://127.0.0.1:8766/health" | python3 -m json.tool || echo "❌ Daemon not running"
+curl -s --noproxy "*" "http://127.0.0.1:$PORT/health" | python3 -m json.tool || echo "❌ Daemon not running"
