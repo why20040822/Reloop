@@ -1,0 +1,463 @@
+{
+  "base_token": "DIIdbR2c8ax8bTsZoNKcnX6enSe",
+  "table_id": "tblWFuBQrPmllE9W",
+  "table_name": "候选人主表",
+  "version": "2026-07-13-verified",
+  "notes": "新版候选人表字段映射。支持 text/number/select/multi_select/attachment/datetime/link。只写入可写存储字段。",
+  "fields": {
+    "source_channel": {
+      "name": "来源渠道",
+      "field_id": "fldjuCPZju",
+      "type": "select",
+      "required": false,
+      "candidate_field": "source_type",
+      "options": [
+        "飞书表单",
+        "ZIP批量导入",
+        "顾问上传",
+        "猎头合作",
+        "历史迁移",
+        "其他",
+        "测试导入",
+        "演示导入",
+        "Worker测试",
+        "飞书CLI"
+      ],
+      "fallback": "历史迁移"
+    },
+    "phone": {
+      "name": "手机号",
+      "field_id": "fldPTfVrz3",
+      "type": "text",
+      "required": false,
+      "candidate_field": "phone"
+    },
+    "phone_normalized": {
+      "name": "手机号规范值",
+      "field_id": "fldHwlZqdr",
+      "type": "text",
+      "required": false,
+      "candidate_field": "phone"
+    },
+    "experience_years": {
+      "name": "工作年限",
+      "field_id": "fld5G6LUN8",
+      "type": "number",
+      "required": false,
+      "candidate_field": null,
+      "formatter": "infer_experience_years"
+    },
+    "current_title": {
+      "name": "当前岗位",
+      "field_id": "fldNjJRmeJ",
+      "type": "text",
+      "required": false,
+      "candidate_field": "current_title"
+    },
+    "parse_confidence": {
+      "name": "AI解析置信度",
+      "field_id": "flduCdjFvr",
+      "type": "number",
+      "required": false,
+      "candidate_field": "parse_confidence"
+    },
+    "job_intent": {
+      "name": "求职意向",
+      "field_id": "fldjnybrkB",
+      "type": "text",
+      "required": false,
+      "candidate_field": "expected_title"
+    },
+    "work_experience_summary": {
+      "name": "工作经历摘要",
+      "field_id": "fldcy4iVks",
+      "type": "text",
+      "required": false,
+      "candidate_field": "work_experiences",
+      "formatter": "work_experience_summary",
+      "max_length": 95000
+    },
+    "current_company": {
+      "name": "当前公司",
+      "field_id": "fld0P0N3Gs",
+      "type": "text",
+      "required": false,
+      "candidate_field": "current_company"
+    },
+    "manual_review_status": {
+      "name": "人工审核状态",
+      "field_id": "fldmPl5vNn",
+      "type": "select",
+      "required": false,
+      "candidate_field": null,
+      "options": ["待审核", "通过", "驳回"],
+      "fallback": "待审核"
+    },
+    "hermes_source_record_id": {
+      "name": "Hermes来源记录ID",
+      "field_id": "fldUZ4Lmrh",
+      "type": "text",
+      "required": false,
+      "candidate_field": null
+    },
+    "current_location": {
+      "name": "所在城市",
+      "field_id": "fldPr5IxCT",
+      "type": "text",
+      "required": false,
+      "candidate_field": "current_location"
+    },
+    "pending_confirmations": {
+      "name": "信息待确认项",
+      "field_id": "fld0emc3ED",
+      "type": "text",
+      "required": false,
+      "candidate_field": "missing_fields",
+      "formatter": "join_comma"
+    },
+    "email": {
+      "name": "邮箱",
+      "field_id": "fldFpqo9p2",
+      "type": "text",
+      "required": false,
+      "candidate_field": "email"
+    },
+    "validity_reason": {
+      "name": "有效性原因",
+      "field_id": "fldUoZLNV2",
+      "type": "text",
+      "required": false,
+      "candidate_field": null,
+      "formatter": "validity_reason"
+    },
+    "job_direction": {
+      "name": "岗位方向",
+      "field_id": "flddx2gXj9",
+      "type": "multi_select",
+      "required": false,
+      "candidate_field": "tech_stack",
+      "options": [
+        "算法",
+        "前端",
+        "后端",
+        "全栈",
+        "产品",
+        "数据",
+        "基础架构",
+        "运营",
+        "Linux 系统管理",
+        "服务器配置与调优",
+        "故障监控与排查",
+        "系统架构优化",
+        "数据库集群管理",
+        "SQL 调优与索引优化",
+        "分库分表架构",
+        "数据治理",
+        "CI/CD 体系搭建",
+        "自动化脚本开发",
+        "Jenkins/Docker",
+        "自动化部署",
+        "Tomcat 应用服务器管理",
+        "CDN 运维优化",
+        "Nginx 配置",
+        "项目管理与团队协作",
+        "系统容量规划",
+        "版本迭代管理",
+        "Agent 开发",
+        "LangChain",
+        "LangGraph",
+        "AutoGen",
+        "RAG",
+        "Python",
+        "PyTorch",
+        "Java",
+        "Spring Boot",
+        "MySQL",
+        "Docker",
+        "Kubernetes",
+        "LLM",
+        "Embedding",
+        "Knowledge Base",
+        "Text-to-Image",
+        "AIGC",
+        "Agent Workflow",
+        "Function Calling",
+        "Multi-turn Dialogue",
+        "Intent Classification",
+        "Text-to-SQL",
+        "Prompt Engineering",
+        "CoT",
+        "Model Evaluation"
+      ]
+    },
+    "hermes_fingerprint": {
+      "name": "Hermes输入指纹",
+      "field_id": "fldjDnGXHc",
+      "type": "text",
+      "required": false,
+      "candidate_field": "attachment_sha256"
+    },
+    "resume_validity": {
+      "name": "简历有效性",
+      "field_id": "fldcGEz2ue",
+      "type": "select",
+      "required": false,
+      "candidate_field": null,
+      "options": ["可推荐", "待补全", "不可联系", "解析失败", "疑似重复"],
+      "formatter": "resume_validity",
+      "fallback": "待补全"
+    },
+    "email_normalized": {
+      "name": "邮箱规范值",
+      "field_id": "fldoxrwrae",
+      "type": "text",
+      "required": false,
+      "candidate_field": "email"
+    },
+    "parse_version": {
+      "name": "解析版本",
+      "field_id": "fld92syr2Z",
+      "type": "number",
+      "required": false,
+      "candidate_field": "parser_version"
+    },
+    "prompt_version": {
+      "name": "Hermes提示词版本",
+      "field_id": "fld21pvLTs",
+      "type": "text",
+      "required": false,
+      "candidate_field": "parser_version"
+    },
+    "hermes_log": {
+      "name": "Hermes处理日志",
+      "field_id": "fldcg70rCY",
+      "type": "text",
+      "required": false,
+      "candidate_field": null,
+      "formatter": "parser_metadata",
+      "max_length": 95000
+    },
+    "project_experience_summary": {
+      "name": "项目经历摘要",
+      "field_id": "fldBJ9nQGF",
+      "type": "text",
+      "required": false,
+      "candidate_field": "project_experiences",
+      "formatter": "project_experience_summary",
+      "max_length": 95000
+    },
+    "hermes_run_id": {
+      "name": "Hermes运行ID",
+      "field_id": "fldW38MYcH",
+      "type": "text",
+      "required": false,
+      "candidate_field": null
+    },
+    "expected_salary": {
+      "name": "期望薪资",
+      "field_id": "fldFOWIKAM",
+      "type": "text",
+      "required": false,
+      "candidate_field": "expected_salary"
+    },
+    "original_resume_attachment": {
+      "name": "原始简历附件",
+      "field_id": "fldppHbeH0",
+      "type": "attachment",
+      "required": false,
+      "candidate_field": "original_attachment_path"
+    },
+    "school": {
+      "name": "学校",
+      "field_id": "fldZp9r4I7",
+      "type": "text",
+      "required": false,
+      "candidate_field": "school"
+    },
+    "management_experience": {
+      "name": "管理经验",
+      "field_id": "fldLJDfto0",
+      "type": "text",
+      "required": false,
+      "candidate_field": null
+    },
+    "ai_parse_raw": {
+      "name": "AI解析原文",
+      "field_id": "fldsEQR4Gr",
+      "type": "text",
+      "required": false,
+      "candidate_field": "raw_text",
+      "max_length": 95000
+    },
+    "name": {
+      "name": "姓名",
+      "field_id": "fldzfT0qEZ",
+      "type": "text",
+      "required": false,
+      "candidate_field": "name"
+    },
+    "ai_talent_profile": {
+      "name": "AI人才画像",
+      "field_id": "fldXW8jBSG",
+      "type": "text",
+      "required": false,
+      "candidate_field": null,
+      "formatter": "ai_profile_summary",
+      "max_length": 95000
+    },
+    "current_salary": {
+      "name": "当前薪资",
+      "field_id": "fldlP2jEuc",
+      "type": "text",
+      "required": false,
+      "candidate_field": "expected_salary"
+    },
+    "processing_status": {
+      "name": "处理状态",
+      "field_id": "fldEKbw50s",
+      "type": "select",
+      "required": false,
+      "candidate_field": null,
+      "options": ["待解析", "解析中", "解析失败", "待人工审核", "疑似重复", "正式人才", "待补充", "已归档"],
+      "fallback": "待人工审核"
+    },
+    "looking_for_opportunity": {
+      "name": "是否看机会",
+      "field_id": "fldp01WBXY",
+      "type": "select",
+      "required": false,
+      "candidate_field": "opportunity_intent",
+      "options": ["是", "否", "无信息"],
+      "formatter": "boolean_to_select",
+      "fallback": "无信息"
+    },
+    "skill_tags": {
+      "name": "技能标签",
+      "field_id": "fld1AhIFXh",
+      "type": "multi_select",
+      "required": false,
+      "candidate_field": "tech_stack",
+      "options": [
+        "算法",
+        "前端",
+        "后端",
+        "全栈",
+        "产品",
+        "数据",
+        "基础架构",
+        "运营",
+        "Linux 系统管理",
+        "服务器配置与调优",
+        "故障监控与排查",
+        "系统架构优化",
+        "数据库集群管理",
+        "SQL 调优与索引优化",
+        "分库分表架构",
+        "数据治理",
+        "CI/CD 体系搭建",
+        "自动化脚本开发",
+        "Jenkins/Docker",
+        "自动化部署",
+        "Tomcat 应用服务器管理",
+        "CDN 运维优化",
+        "Nginx 配置",
+        "项目管理与团队协作",
+        "系统容量规划",
+        "版本迭代管理",
+        "Agent 开发",
+        "LangChain",
+        "LangGraph",
+        "AutoGen",
+        "RAG",
+        "Python",
+        "PyTorch",
+        "Java",
+        "Spring Boot",
+        "MySQL",
+        "Docker",
+        "Kubernetes",
+        "LLM",
+        "Embedding",
+        "Knowledge Base",
+        "Text-to-Image",
+        "AIGC",
+        "Agent Workflow",
+        "Function Calling",
+        "Multi-turn Dialogue",
+        "Intent Classification",
+        "Text-to-SQL",
+        "Prompt Engineering",
+        "CoT",
+        "Model Evaluation"
+      ]
+    },
+    "original_talent_link": {
+      "name": "原人才库链接",
+      "field_id": "fldp2DjUDX",
+      "type": "text",
+      "required": false,
+      "candidate_field": "source_url"
+    },
+    "retry_count": {
+      "name": "重试次数",
+      "field_id": "fldmtsyy1K",
+      "type": "number",
+      "required": false,
+      "candidate_field": null
+    },
+    "consultant_notes": {
+      "name": "顾问备注",
+      "field_id": "fld5M30Uzw",
+      "type": "text",
+      "required": false,
+      "candidate_field": "notes",
+      "max_length": 95000
+    },
+    "expected_location": {
+      "name": "期望地点",
+      "field_id": "fldJKBL8eq",
+      "type": "text",
+      "required": false,
+      "candidate_field": "expected_location"
+    },
+    "major": {
+      "name": "专业",
+      "field_id": "fldLRLMSjg",
+      "type": "text",
+      "required": false,
+      "candidate_field": "education",
+      "formatter": "major"
+    },
+    "degree": {
+      "name": "学历",
+      "field_id": "fldQkdlg9I",
+      "type": "select",
+      "required": false,
+      "candidate_field": "education",
+      "options": ["专科", "本科", "硕士", "博士", "其他", "学士"],
+      "formatter": "degree"
+    }
+  },
+  "readonly_fields": {
+    "talent_id": {
+      "name": "人才ID",
+      "field_id": "fld3Wby9yq",
+      "type": "auto_number"
+    },
+    "created_at": {
+      "name": "创建时间",
+      "field_id": "fld0XiaNkt",
+      "type": "created_at"
+    },
+    "updated_at": {
+      "name": "最近更新时间",
+      "field_id": "fldEMqJUA3",
+      "type": "updated_at"
+    },
+    "talent_dynamics": {
+      "name": "人才动态",
+      "field_id": "fldvzZ6Nyc",
+      "type": "link"
+    }
+  }
+}

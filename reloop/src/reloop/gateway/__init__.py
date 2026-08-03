@@ -1,0 +1,1 @@
+"""Browser/plugin gateway boundary."""

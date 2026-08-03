@@ -1,0 +1,138 @@
+{
+  "base_token": "DIIdbR2c8ax8bTsZoNKcnX6enSe",
+  "table_id": "tblyT3bebRJsyHar",
+  "table_name": "正式版-简历解析",
+  "version": "2026-07-13-verified",
+  "notes": "旧 Kimi 正式表字段映射。跳过 not_support/created_at/created_by 等系统字段。",
+  "fields": {
+    "resume_attachment": {
+      "name": "简历附件",
+      "field_id": "fldZjxabzr",
+      "type": "attachment",
+      "required": false,
+      "candidate_field": "original_attachment_path",
+      "description": "原始简历附件，通过飞书附件上传接口写入"
+    },
+    "name": {
+      "name": "姓名",
+      "field_id": "fld2CSlJFu",
+      "type": "text",
+      "required": false,
+      "candidate_field": "name"
+    },
+    "phone": {
+      "name": "电话",
+      "field_id": "fldYRqJsnb",
+      "type": "text",
+      "required": false,
+      "candidate_field": "phone"
+    },
+    "company": {
+      "name": "公司",
+      "field_id": "fldgFRlmXJ",
+      "type": "text",
+      "required": false,
+      "candidate_field": "current_company"
+    },
+    "current_title": {
+      "name": "就职岗位",
+      "field_id": "fldu5m37Hh",
+      "type": "text",
+      "required": false,
+      "candidate_field": "current_title"
+    },
+    "current_location": {
+      "name": "现工作地点",
+      "field_id": "fldrbMQF0I",
+      "type": "text",
+      "required": false,
+      "candidate_field": "current_location"
+    },
+    "salary": {
+      "name": "薪资解析",
+      "field_id": "fldygJRRmk",
+      "type": "text",
+      "required": false,
+      "candidate_field": "expected_salary"
+    },
+    "school": {
+      "name": "学校",
+      "field_id": "fldaakYbZB",
+      "type": "text",
+      "required": false,
+      "candidate_field": "school"
+    },
+    "school_background": {
+      "name": "学校背景信息",
+      "field_id": "fldjpjjreX",
+      "type": "text",
+      "required": false,
+      "candidate_field": "education",
+      "formatter": "education_summary"
+    },
+    "skills": {
+      "name": "技术栈",
+      "field_id": "fld9Fc1GMd",
+      "type": "text",
+      "required": false,
+      "candidate_field": "tech_stack",
+      "formatter": "join_comma"
+    },
+    "resume_parse_content": {
+      "name": "简历解析内容",
+      "field_id": "fldWDXWbQ6",
+      "type": "text",
+      "required": false,
+      "candidate_field": "raw_text",
+      "max_length": 95000
+    },
+    "resume_parse": {
+      "name": "简历解析",
+      "field_id": "fldMAJRmi8",
+      "type": "text",
+      "required": false,
+      "candidate_field": null,
+      "formatter": "parser_metadata"
+    },
+    "talent_link": {
+      "name": "人才库链接",
+      "field_id": "fldRMu1Tsa",
+      "type": "text",
+      "required": false,
+      "candidate_field": "source_url"
+    },
+    "looking_for_opportunity": {
+      "name": "是否看机会_无AI",
+      "field_id": "fldzhpNL3e",
+      "type": "select",
+      "required": false,
+      "candidate_field": "opportunity_intent",
+      "options": [
+        "是",
+        "否",
+        "无信息"
+      ],
+      "formatter": "boolean_to_select",
+      "fallback": "无信息"
+    },
+    "notes": {
+      "name": "备注信息",
+      "field_id": "fldMS0okiD",
+      "type": "text",
+      "required": false,
+      "candidate_field": "notes"
+    }
+  },
+  "readonly_fields": {
+    "resume_uploader": {
+      "name": "简历上传人",
+      "field_id": "fldDIxIntE",
+      "type": "created_by"
+    },
+    "resume_upload_time": {
+      "name": "简历上传时间",
+      "field_id": "fldhQb3yat",
+      "type": "created_at"
+    }
+  }
+}
