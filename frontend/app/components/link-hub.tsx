@@ -1464,7 +1464,7 @@ export function SourcesPage() {
     <>
       <PageHeading
         title="数据连接"
-        description="RE:LOOP 会自动从以下来源获取人才资料和近期活跃信号；正常情况下你无需操作。"
+        description="RE:LOOP 从以下来源获取人才资料；正常情况下你无需操作。"
       >
         <button className="secondary-button" onClick={() => setShowIssues((current) => !current)}><TriangleAlert size={14} />查看异常</button>
         <button className="primary-button" onClick={refreshBackendStatus} disabled={syncing}>{syncing ? <LoaderCircle className="spin" size={14} /> : <RefreshCw size={14} />}{syncing ? "同步中…" : "检查并同步状态"}</button>
@@ -1472,16 +1472,16 @@ export function SourcesPage() {
 
       <section className="live-backend-panel">
         <div className="live-backend-heading">
-          <div><span className={`live-backend-dot ${backendStatus?.ok ? "is-ok" : ""}`} /><strong>Reloop 本地后端</strong><small>前端代理 → 解析器 → SQLite outbox</small></div>
+          <div><span className={`live-backend-dot ${backendStatus?.ok ? "is-ok" : ""}`} /><strong>Reloop 后端</strong><small>前端代理 → 云端精品库（reloop）</small></div>
           <span className={`live-backend-state ${backendStatus?.ok ? "is-ok" : ""}`}>{backendStatus === null ? "检查中" : backendStatus.ok ? "已连接" : "未连接"}</span>
         </div>
         <div className="live-backend-metrics">
           <span><strong>{backendStatus?.candidateCount ?? "—"}</strong><small>候选人</small></span>
           <span><strong>{backendStatus?.ok ? "18765" : "—"}</strong><small>API 端口</small></span>
-          <span><strong>{backendStatus?.ok ? "本地" : "待连接"}</strong><small>数据范围</small></span>
+          <span><strong>{backendStatus?.ok ? "云端" : "待连接"}</strong><small>数据范围</small></span>
         </div>
         <div className="live-import-box">
-          <div><FileText size={15} /><strong>从前端录入候选人</strong><small>资料先进入本地 outbox，不会直接写入 RDS 或飞书。</small></div>
+          <div><FileText size={15} /><strong>从前端录入候选人</strong><small>资料经解析后进入 outbox，由 worker 顺序写入云端精品库与飞书。</small></div>
           <textarea value={importDraft} onChange={(event) => setImportDraft(event.target.value)} placeholder="粘贴候选人资料，例如：姓名、电话、邮箱、工作经历、教育经历…" />
           <div className="live-import-actions">
             <span className={importMessage && !importMessage.includes("已进入") ? "is-error" : ""}>{importMessage}</span>
