@@ -833,12 +833,19 @@ export function TalentPage() {
       const periodDays = { "近 24 小时": 1, "近 3 天": 3, "近 7 天": 7, "近 30 天": 30 } as const;
       for (const [label, days] of Object.entries(periodDays)) {
         if (selectedFilters.includes(label)) {
-          const ts = Date.parse(talent.updated || "");
+          // 新鲜度以采集时间为准：updated_at 会被治理操作（回填/清洗）刷新，不代表人才活跃
+          const ts = Date.parse(talent.collectedAt || talent.updated || "");
           if (Number.isNaN(ts) || Date.now() - ts > days * 86400000) return false;
         }
       }
-      const selectedRoles = selectedFilters.filter((item) => ["产品", "技术", "运营", "管理"].includes(item));
-      if (selectedRoles.length && !selectedRoles.some((r) => `${talent.role} ${talent.matchRole}`.includes(r))) return false;
+      const roleGroups: Record<string, string[]> = {
+        产品: ["产品"],
+        技术: ["技术", "工程师", "开发", "算法", "数据", "前端", "后端", "全栈", "架构师", "测试", "运维"],
+        运营: ["运营", "增长", "市场", "品牌", "内容"],
+        管理: ["管理", "总监", "负责人", "主管", "经理", "合伙人", "创始人"],
+      };
+      const selectedRoles = selectedFilters.filter((item) => item in roleGroups);
+      if (selectedRoles.length && !selectedRoles.some((r) => roleGroups[r].some((kw) => `${talent.role} ${talent.matchRole}`.includes(kw)))) return false;
       return true;
     });
     return [...filtered].sort((a, b) => {
@@ -1063,11 +1070,11 @@ export function JobsPage() {
       </PageHeading>
 
       <section className="job-overview-strip">
-        <div><span>全部职位</span><strong>24</strong></div>
-        <div><span>正在招聘</span><strong>18</strong><small>75%</small></div>
-        <div><span>急招职位</span><strong className="orange-number">5</strong><small>需优先推进</small></div>
-        <div><span>待确认 JD</span><strong>3</strong><small>等待客户反馈</small></div>
-        <div className="job-ai-stat"><Sparkles size={15} /><span><strong>177</strong><small>AI 高匹配人才</small></span></div>
+        <div><span>全部职位</span><strong>{jobs.length}</strong></div>
+        <div><span>正在招聘</span><strong>{jobs.filter((j) => j.status === "招聘中" || j.status === "急招").length}</strong></div>
+        <div><span>急招职位</span><strong className="orange-number">{jobs.filter((j) => j.status === "急招").length}</strong><small>需优先推进</small></div>
+        <div><span>待确认 JD</span><strong>{jobs.filter((j) => j.status === "待确认").length}</strong><small>等待客户反馈</small></div>
+        <div className="job-ai-stat"><Sparkles size={15} /><span><strong>0</strong><small>AI 高匹配人才</small></span></div>
       </section>
 
       <div className="talent-layout jobs-layout">
@@ -1094,8 +1101,7 @@ export function JobsPage() {
           <div className="talent-toolbar jobs-toolbar">
             <div>
               <strong>全部职位</strong>
-              <span>24</span>
-              <small><Sparkles size={12} />5 个职位需要优先推进</small>
+              <span>{visibleJobs.length}</span>
             </div>
             <div className="talent-toolbar-actions">
               <button className="mobile-filter-button" onClick={() => setFiltersOpen(!filtersOpen)}><Filter size={15} />筛选</button>
@@ -1170,8 +1176,7 @@ export function JobsPage() {
             {visibleJobs.length === 0 && <div className="empty-table"><Search size={22} /><strong>没有找到职位</strong><span>试试职位、客户或公司名称</span></div>}
           </div>
           <div className="table-footer">
-            <span>显示 1–{visibleJobs.length}，共 24 个职位</span>
-            <div><button disabled><ChevronRight className="rotate-180" size={15} /></button><button className="active">1</button><button>2</button><button>3</button><button><ChevronRight size={15} /></button></div>
+            <span>显示 1–{visibleJobs.length}，共 {visibleJobs.length} 个职位</span>
           </div>
         </section>
       </div>
