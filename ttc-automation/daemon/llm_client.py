@@ -3,9 +3,12 @@
 If no API key is configured, returns None and callers must fall back to heuristics.
 """
 
+import base64
 import json
+import mimetypes
 import os
-from typing import Any, Optional
+from pathlib import Path
+from typing import Any, Optional, Union
 
 
 def _get_client():
@@ -14,16 +17,31 @@ def _get_client():
     if not api_key:
         return None
     try:
+        import httpx
         import openai
         kwargs = {"api_key": api_key}
         if base_url:
             kwargs["base_url"] = base_url
+        # Vision/image requests can be slow; allow up to 10 minutes for the
+        # read, but keep the connect timeout short so unreachable endpoints
+        # fail fast instead of hanging 10 minutes.
+        kwargs["timeout"] = httpx.Timeout(600.0, connect=5.0)
         return openai.OpenAI(**kwargs)
     except Exception:
         return None
 
 
-def chat_completion(messages: list[dict[str, str]],
+def image_to_data_url(path: Union[str, Path]) -> str:
+    """Encode a local image file as a base64 data URL for vision models."""
+    path = Path(path)
+    mime, _ = mimetypes.guess_type(str(path))
+    mime = mime or "image/png"
+    with open(path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    return f"data:{mime};base64,{b64}"
+
+
+def chat_completion(messages: list[dict[str, Any]],
                     model: Optional[str] = None,
                     temperature: float = 0.3,
                     json_mode: bool = False) -> Optional[str]:
@@ -46,12 +64,38 @@ def chat_completion(messages: list[dict[str, str]],
         return None
 
 
-def complete(prompt: str, model: Optional[str] = None, json_mode: bool = False) -> Optional[str]:
+def complete(prompt: str, model: Optional[str] = None, json_mode: bool = False, temperature: float = 0.3) -> Optional[str]:
     return chat_completion(
         messages=[{"role": "system", "content": "You are a helpful assistant."},
                   {"role": "user", "content": prompt}],
         model=model,
         json_mode=json_mode,
+        temperature=temperature,
+    )
+
+
+def complete_with_image(
+    prompt: str,
+    image_path: Union[str, Path],
+    model: Optional[str] = None,
+    json_mode: bool = False,
+    temperature: float = 0.3,
+) -> Optional[str]:
+    """Send a text prompt together with a local image to a vision-capable model."""
+    return chat_completion(
+        messages=[
+            {"role": "system", "content": "You are a helpful assistant."},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": image_to_data_url(image_path)}},
+                    {"type": "text", "text": prompt},
+                ],
+            },
+        ],
+        model=model,
+        json_mode=json_mode,
+        temperature=temperature,
     )
 
 

@@ -161,6 +161,7 @@ wangxm@example.com
         mock_extract.assert_called_once_with(Path("/tmp/test.docx"))
 
     def test_quality_stats_structure(self):
+        app.init_db()
         stats = app.quality_stats()
         self.assertTrue(stats["ok"])
         self.assertIn("field_completeness", stats)

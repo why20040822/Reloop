@@ -7,6 +7,7 @@ from contextlib import closing
 
 from fastapi.testclient import TestClient
 
+from reloop.api import legacy
 from reloop.api.main import app as http_app
 from reloop.ingestion.delivery import DeliveryStore
 from reloop.ingestion.pipeline import _db_conn, init_ingestion_tables
@@ -15,6 +16,7 @@ from reloop.ingestion.pipeline import _db_conn, init_ingestion_tables
 class ReviewApiTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
+        legacy.init_db()
         init_ingestion_tables()
         DeliveryStore()
         # Start with empty tables so reprocess_existing on app startup has no stale data.
