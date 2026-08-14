@@ -8,13 +8,12 @@ legacy local SQLite handlers so a developer machine still works.
 from __future__ import annotations
 
 import logging
-import os
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from reloop.api import legacy
-from reloop.domain.jd_match import rank_candidates
+from reloop.domain.jd_match import llm_available, rank_candidates
 from reloop.sinks.rds.client import (
     RdsConfigurationError,
     fetch_match_pool,
@@ -60,10 +59,12 @@ def candidate_detail(candidate_id: int) -> dict:
 
 @router.post("/api/jd-match")
 def jd_match(payload: JdMatchRequest) -> dict:
-    """Demo 入口：JD 文本 → 云端粗筛 → 大模型精算 → Top N（5 因子占位）。"""
+    """Demo 入口：JD 文本 → 云端粗筛 → 大模型精算 → Top N（5 因子占位）。
 
-    if not os.getenv("TTC_LLM_API_KEY", "").strip():
-        raise HTTPException(502, "大模型未配置：请在 .env 填入 TTC_LLM_API_KEY 后重试")
+    LLM 未配置时自动降级为关键词粗排并在 mode 中如实标记。
+    """
+
+    mode = "llm" if llm_available() else "keyword_fallback"
     try:
         pool = fetch_match_pool(payload.pool_size)
     except RdsConfigurationError as exc:
@@ -76,6 +77,7 @@ def jd_match(payload: JdMatchRequest) -> dict:
     )
     return {
         "ok": True,
+        "mode": mode,
         "pool_size": len(pool),
         "scored": len(results),
         "results": [
@@ -86,6 +88,7 @@ def jd_match(payload: JdMatchRequest) -> dict:
                 "match_score": r.match_score,
                 "reason": r.reason,
                 "factors": r.factors,
+                "mode": r.mode,
             }
             for r in results
         ],

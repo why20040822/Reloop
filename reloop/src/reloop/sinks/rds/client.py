@@ -169,7 +169,10 @@ def get_candidate_by_id(candidate_id: int) -> dict[str, Any] | None:
 
 
 def fetch_match_pool(pool_size: int = 100) -> list[dict[str, Any]]:
-    """Fetch a candidate pool for JD matching: full resumes, contactable first."""
+    """Fetch a candidate pool for JD matching: full resumes, contactable first.
+
+    垃圾姓名（解析失败的版块标题等）不进匹配池——触达场景不可用。
+    """
 
     pool_size = max(1, min(int(pool_size), 500))
     with closing(_connection()) as connection:
@@ -177,6 +180,8 @@ def fetch_match_pool(pool_size: int = 100) -> list[dict[str, Any]]:
             cursor.execute(
                 """SELECT * FROM cloud_candidates
                    WHERE raw_text IS NOT NULL AND LENGTH(raw_text) > 200
+                     AND name IS NOT NULL AND name != ''
+                     AND name NOT IN ('全文','未知','打招呼','在线简历','待识别候选人','核心优势','个人优势','工作经历')
                    ORDER BY (phone IS NULL OR phone = ''), collected_at DESC
                    LIMIT %s""",
                 (pool_size,),

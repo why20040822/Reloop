@@ -55,9 +55,10 @@ class JdMatchResult:
     candidate_id: Any
     name: str
     score: float                     # 0-100 加权乘法总分
-    match_score: float               # 大模型给出的匹配度 0-1
-    reason: str                      # 大模型生成的触达理由
+    match_score: float               # 匹配度 0-1
+    reason: str                      # 触达理由（LLM）或命中关键词（降级）
     factors: dict[str, float | None] = field(default_factory=dict)
+    mode: str = "llm"                # llm | keyword_fallback（LLM 未配置时的诚实降级）
 
 
 def placeholder_factors() -> dict[str, float | None]:
@@ -104,10 +105,36 @@ def _llm_match(jd_text: str, candidate: dict[str, Any]) -> tuple[float, str] | N
     return match, reason
 
 
-def score_candidate(jd_text: str, candidate: dict[str, Any]) -> JdMatchResult | None:
-    """Score one candidate: LLM 匹配度 + 占位因子走加权乘法。"""
+def _jd_tokens(jd_text: str) -> set[str]:
+    return {t.lower() for t in re.split(r"[^\w一-鿿]+", jd_text) if len(t) >= 2}
 
-    llm = _llm_match(jd_text, candidate)
+
+def _keyword_match(jd_text: str, candidate: dict[str, Any]) -> tuple[float, str] | None:
+    """降级评分：JD 关键词在简历中的命中率。无命中返回 None。"""
+
+    tokens = _jd_tokens(jd_text)
+    text = f"{candidate.get('raw_text') or ''} {candidate.get('current_role') or ''}".lower()
+    hits = sorted(t for t in tokens if t in text)
+    if not hits:
+        return None
+    match = min(1.0, len(hits) / max(len(tokens), 6))
+    return match, "命中关键词：" + "、".join(hits[:5])
+
+
+def llm_available() -> bool:
+    import os
+
+    return bool(os.getenv("TTC_LLM_API_KEY", "").strip())
+
+
+def score_candidate(jd_text: str, candidate: dict[str, Any]) -> JdMatchResult | None:
+    """Score one candidate: LLM 优先，未配置/失败时关键词降级（如实标记 mode）。"""
+
+    mode = "llm"
+    llm = _llm_match(jd_text, candidate) if llm_available() else None
+    if llm is None:
+        llm = _keyword_match(jd_text, candidate)
+        mode = "keyword_fallback"
     if llm is None:
         return None
     match, reason = llm
@@ -120,13 +147,14 @@ def score_candidate(jd_text: str, candidate: dict[str, Any]) -> JdMatchResult | 
         match_score=round(match, 3),
         reason=reason,
         factors=factors,
+        mode=mode,
     )
 
 
 def _keyword_prefilter(jd_text: str, candidates: list[dict[str, Any]], keep: int) -> list[dict[str, Any]]:
     """Cheap keyword-overlap pre-filter so the LLM only sees the best pool."""
 
-    tokens = {t.lower() for t in re.split(r"[^\w一-鿿]+", jd_text) if len(t) >= 2}
+    tokens = _jd_tokens(jd_text)
     if not tokens:
         return candidates[:keep]
 
@@ -160,6 +188,7 @@ __all__ = [
     "FACTOR_WEIGHTS",
     "JdMatchResult",
     "NEUTRAL_FACTOR",
+    "llm_available",
     "placeholder_factors",
     "rank_candidates",
     "score_candidate",

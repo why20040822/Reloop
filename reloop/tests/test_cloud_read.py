@@ -7,8 +7,10 @@ import unittest
 from reloop.domain.jd_match import (
     FACTOR_WEIGHTS,
     NEUTRAL_FACTOR,
+    _keyword_match,
     _keyword_prefilter,
     placeholder_factors,
+    score_candidate,
     weighted_product,
 )
 from reloop.sinks.rds.client import public_candidate_row
@@ -85,6 +87,25 @@ class KeywordPrefilterTest(unittest.TestCase):
         pool = _keyword_prefilter("HRBP 人力资源 招聘", candidates, keep=2)
         self.assertEqual(pool[0]["id"], 2)
         self.assertEqual(len(pool), 2)
+
+
+class KeywordFallbackTest(unittest.TestCase):
+    def test_keyword_match_scores_overlap(self):
+        result = _keyword_match("HRBP 人力资源 招聘", {"raw_text": "资深 HRBP，负责人力资源与招聘工作"})
+        self.assertIsNotNone(result)
+        match, reason = result
+        self.assertGreater(match, 0)
+        self.assertIn("命中关键词", reason)
+
+    def test_keyword_match_none_without_overlap(self):
+        self.assertIsNone(_keyword_match("HRBP 人力资源", {"raw_text": "厨师，擅长川菜"}))
+
+    def test_score_candidate_falls_back_without_llm(self):
+        # 测试环境无 TTC_LLM_API_KEY → 必须走 keyword_fallback 且如实标记
+        result = score_candidate("HRBP 人力资源 招聘", {"id": 7, "name": "测试", "raw_text": "HRBP 人力资源 招聘 10 年"})
+        self.assertIsNotNone(result)
+        self.assertEqual(result.mode, "keyword_fallback")
+        self.assertGreater(result.score, 0)
 
 
 if __name__ == "__main__":
