@@ -1630,9 +1630,9 @@ export function TalentDetailPage() {
                   <span className="company-badge badge-moon">{talent.company.slice(0, 1)}</span>
                   <div>
                     <strong>{talent.role}</strong>
-                    <p>{talent.company} · 本地 Reloop 解析</p>
+                    <p>{talent.company} · 云端精品库</p>
                     <small>{profile.currentPeriod}</small>
-                    <ul><li>原始资料已保存到本地候选人记录，等待人工复核。</li></ul>
+                    <ul><li>原始资料已保存到云端精品库，等待人工复核。</li></ul>
                   </div>
                 </div> : <>
                 <div className="timeline-entry current">
