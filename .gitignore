@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+ENV/
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# 虚拟环境(项目内)
+.venv-managed/
+
+# 环境变量(含密钥, 禁止提交)
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# 日志 / 本地缓存
+*.log
+logs/
+reloop_cache/
+
+# 测试 / 覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+
+# 临时提取脚本
+extract_docx.py
