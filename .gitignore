@@ -56,3 +56,6 @@ tmp/
 *.p12
 *.pfx
 mysql.env
+
+# pip editable install artifacts
+reloop/src/reloop.egg-info/

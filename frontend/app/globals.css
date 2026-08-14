@@ -5688,6 +5688,26 @@ button.metric-card:hover {
   margin-left: 6px;
 }
 
+.detail-contact {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 2px;
+}
+
+.detail-contact a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent, #4f46e5);
+  font-size: 9px;
+  text-decoration: none;
+}
+
+.detail-contact a:hover {
+  text-decoration: underline;
+}
+
 .detail-actions {
   display: flex;
   align-items: center;

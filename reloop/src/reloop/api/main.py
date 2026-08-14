@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from reloop.api import legacy
 from reloop.api.deps import require_api_access
-from reloop.api.routes import ingest, jobs, ops, review, search
+from reloop.api.routes import cloud, ingest, jobs, ops, review, search
 from reloop.config import STATIC_DIR
 
 app = FastAPI(
@@ -26,7 +26,8 @@ if cors_origins:
         allow_headers=["Authorization", "Content-Type", "X-Actor"],
     )
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-for router in (ops.router, ingest.router, jobs.router, search.router, review.router):
+# cloud 先于 jobs：/api/candidates 由云端读接管（云端未配置时回退本地）
+for router in (cloud.router, ops.router, ingest.router, jobs.router, search.router, review.router):
     app.include_router(router)
 app.router.on_startup.append(legacy.startup)
 
