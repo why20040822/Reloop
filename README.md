@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Reloop - 私域人才触达优先级推荐
 
 > **今天你最应该联系谁，以及为什么。**
@@ -226,3 +227,7 @@ python tests/test_pipeline.py        # 也可 pytest tests/test_pipeline.py -v
 - **大模型**：当前 `.env` 填的是火山方舟 coding 端点（非 OpenAI 兼容，`/embeddings`、`/chat/completions` 均 404），故自动降级为哈希向量+模板话术。换成 OpenAI 兼容服务（如阿里云百炼）即开启真实 LLM 增强与 embedding。
 
 后续待办：前端接入登录态（替换 `api/deps.py::get_current_user`）、真实 LLM Key 接入、`BRAINX_SCORE_W_*` 权重按反馈调优。
+=======
+# Reloop
+Reloop
+>>>>>>> f097e544d5139b1a6c6cea940a36ca634ae1e307
