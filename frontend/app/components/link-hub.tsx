@@ -405,8 +405,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <button><CircleHelp size={17} />帮助中心</button>
           <button><Settings size={17} />设置</button>
           <div className="profile-mini">
-            <span className="avatar avatar-sm avatar-slate">笑</span>
-            <span><strong>笑咪</strong><small>管理员</small></span>
+            <span className="avatar avatar-sm avatar-slate">R</span>
+            <span><strong>管理员</strong><small>企业工作区</small></span>
             <MoreHorizontal size={17} />
           </div>
         </div>
@@ -638,7 +638,7 @@ export function DashboardPage() {
             <div className="dashboard-compact-heading">
               <PageHeading
                 eyebrow={new Date().toLocaleDateString("zh-CN", { year: "numeric", month: "long", day: "numeric", weekday: "long" })}
-                title="早上好，笑咪"
+                title="早上好"
                 description={`云端精品库现有 ${liveTalents.length} 位人才，全部具备联系方式。`}
               >
                 <button
@@ -1729,7 +1729,7 @@ export function TalentDetailPage() {
           <button className="text-button">查看全部 <ArrowUpRight size={13} /></button>
         </SectionHeader>
         <div className="note-composer">
-          <span className="avatar avatar-sm avatar-slate">笑</span>
+          <span className="avatar avatar-sm avatar-slate">R</span>
           <textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="添加备注、沟通结果或下一步计划…" />
           <div className="note-actions"><span><button><Phone size={14} /></button><button><Mail size={14} /></button><button><MessageCircle size={14} /></button></span><button className="primary-button" onClick={saveNote}>保存记录</button></div>
         </div>
