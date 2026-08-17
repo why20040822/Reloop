@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Reloop - 私域人才触达优先级推荐
 
 > **今天你最应该联系谁，以及为什么。**
@@ -129,12 +128,22 @@ BRAINX_MYSQL_HOST=ttc-rds-public-0707.mysql.rds.aliyuncs.com
 BRAINX_MYSQL_DATABASE=reloop_app
 BRAINX_DATABASE_URL=                         # 留空=用上面 MySQL; 本地无 RDS 时填 sqlite:///./reloop_dev.db
 
-# ② TTC 人才库 - 接口网关是 gateway 子域(不是 app 子域! app 子域拉数据 404);
-#    token 浏览器 F12->Network 抓 Authorization(整段 Bearer JWT)
+# ② TTC 人才库 - 接口网关是 gateway 子域(不是 app 子域! app 子域拉数据 404)
 BRAINX_TTC_TALENT_BASE_URL=https://gateway.ttcadvisory.com
 BRAINX_TTC_TALENT_API_PATH=/api/private-talent/v1/all-talents
-BRAINX_TTC_TALENT_AUTH_TOKEN=eyJ...         # 飞书登录态 JWT
+BRAINX_TTC_TALENT_AUTH_TOKEN=eyJ...         # 飞书登录态 JWT(约 2 个月有效)
+```
 
+TTC Token 抓取步骤（过期后照此重抓）：
+
+1. 浏览器打开人才库页面 `https://app.ttcadvisory.com/app/private-talent/talents/all-talents/U2034543869059211264`
+2. F12 -> **Network** -> 筛选 **Fetch/XHR**（或在过滤框输 `gateway`）-> 刷新页面
+3. 点开 `gateway.ttcadvisory.com/api/private-talent/v1/all-talents/.../talents?page=1...` 这个请求
+4. **Request Headers -> `Authorization: Bearer eyJhb...`** -> 复制 `Bearer ` 后面那串（**不含** `Bearer ` 前缀，代码会自动拼）填进 `BRAINX_TTC_TALENT_AUTH_TOKEN`
+
+> 防坑：Network 里大量的 `apmplus.volces.com/monitor_web/collect` 请求是**前端监控埋点**（性能上报），不是数据接口，别从它复制任何东西。认准 `gateway.ttcadvisory.com` 域名。
+
+```ini
 # ③ 大模型(可选) - OpenAI 兼容接口; 不填/填错自动降级(哈希向量+模板话术), 流程仍跑通
 BRAINX_LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 BRAINX_LLM_API_KEY=
@@ -150,7 +159,41 @@ uvicorn reloop.main:app --reload --host 0.0.0.0 --port 8000
 启动日志出现 `[startup] DB tables ready` 即就绪（`init_db()` 自动在 `reloop_app` 建好 6 张表，无需手动建表）；
 出现 `init_db skipped` 则是 RDS 没连上（外网地址未申请 / 白名单未放通 / 库名不对），此时 API 仍启动但写库会失败。
 
-### 5.4 一条龙跑通（PowerShell）
+### 5.4 在 Swagger 页面调接口（推荐新手用）
+
+启动后浏览器打开 **http://localhost:8000/docs** ，所有接口操作三步：
+
+1. 点开接口左侧折叠条 -> 点 **Try it out**（进入可编辑模式）
+2. 填参数（每个接口要填什么见下表）
+3. 拉到最底点 **Execute** -> 下方 **Response body** 就是返回结果（200 = 成功）
+
+**`X-Owner-User-Id` 是什么、填什么？**
+
+每个接口的参数表里都有 `X-Owner-User-Id  string | (string | null) (header)`，它是**"当前用户是谁"的标识**（数据隔离键），不是 TTC 登录 Token：
+
+- 它决定数据归属：同步入库的人才、岗位、推荐结果全部挂在它名下；**换个值 = 换个用户，之前同步的数据就看不到了**
+- 不填 -> 接口返回 401
+- 开发期填任意字符串都行，但每次要用**同一个值**。本项目已同步 358 人数据的用户 ID：
+
+  ```
+  ou_ff894386d0ca340dcc2f7bdc53c57a81
+  ```
+
+- TTC 的登录 Token 在 `.env` 的 `BRAINX_TTC_TALENT_AUTH_TOKEN`，由后端自动携带，**不需要**在 Swagger 页面填
+- 表单里 `string | (string | null)` 只是说"填一个字符串"，忽略即可
+
+**各接口要填什么**（完整接口清单见 §7）：
+
+| 接口 | X-Owner-User-Id | 其它参数 | 作用 |
+|---|---|---|---|
+| `POST /sync/ttc` | 上面的用户 ID | 无 | 从 TTC 网关拉取人才库并入库（需 `.env` 已配 Token） |
+| `GET /talents` | 同上 | 无 | 查看入库的人才列表 |
+| `POST /positions` | 同上 | Body：`{"position_name":"商业分析师","jd_text":"数据分析 SQL Python 业务洞察"}` | 设定当前岗位（触发引擎） |
+| `POST /recommend/compute` | 同上 | Query：`position_name=商业分析师` | 实时推荐 Top3 / Top10 / TopN |
+| `GET /recommend/latest` | 同上 | 无 | 查看最近一次推荐结果 |
+| `POST /sync/ttc/ingest` | 同上 | Body：`{"talents":[{...}]}`（页面复制的 JSON） | 手动导入数据（无需 TTC Token） |
+
+### 5.5 一条龙跑通（PowerShell）
 
 所有接口都要带请求头 `X-Owner-User-Id` 做数据隔离（任意字符串，下例用真实 open_id，已同步过数据，直接可见 358 人）：
 
@@ -176,7 +219,7 @@ $r = Invoke-RestMethod "http://localhost:8000/recommend/compute?position_name=�
 $r.top3 | ForEach-Object { "  #$($_.rank) $($_.name) | $($_.company) | score=$($_.score)" }
 ```
 
-### 5.5 其它取数 / 备注
+### 5.6 其它取数 / 备注
 
 ```powershell
 # 页面导出 JSON 直接导入(无需 TTC token, 开发期备用)
@@ -215,7 +258,7 @@ python tests/test_pipeline.py        # 也可 pytest tests/test_pipeline.py -v
 | 用户反馈 | `POST /recommend/feedback` | confirm/reject/correct，写 feedback_logs 供模型调优 |
 | 数据同步 | `POST /sync/ttc` / `POST /sync/ttc/ingest` | 拉取/导入 |
 
-鉴权：请求头 `X-Owner-User-Id`（前端接登录后替换 `api/deps.py`）。
+鉴权：所有接口都要带请求头 `X-Owner-User-Id`（含义与填法见 §5.4；前端接登录后替换 `api/deps.py`）。
 历史结果也可直接查 `recommendations` 表（按 `owner_user_id + run_id`，含 rank/明细/状态）。
 
 ## 8. 接口状态与后续
@@ -227,7 +270,3 @@ python tests/test_pipeline.py        # 也可 pytest tests/test_pipeline.py -v
 - **大模型**：当前 `.env` 填的是火山方舟 coding 端点（非 OpenAI 兼容，`/embeddings`、`/chat/completions` 均 404），故自动降级为哈希向量+模板话术。换成 OpenAI 兼容服务（如阿里云百炼）即开启真实 LLM 增强与 embedding。
 
 后续待办：前端接入登录态（替换 `api/deps.py::get_current_user`）、真实 LLM Key 接入、`BRAINX_SCORE_W_*` 权重按反馈调优。
-=======
-# Reloop
-Reloop
->>>>>>> f097e544d5139b1a6c6cea940a36ca634ae1e307
