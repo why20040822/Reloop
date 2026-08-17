@@ -11,11 +11,15 @@ FRONTEND_PORT=3200
 stop_all() {
   lsof -tiTCP:$BACKEND_PORT -sTCP:LISTEN | xargs kill 2>/dev/null || true
   lsof -tiTCP:$FRONTEND_PORT -sTCP:LISTEN | xargs kill 2>/dev/null || true
+  if [ -f /tmp/reloop-worker.pid ]; then
+    kill "$(cat /tmp/reloop-worker.pid)" 2>/dev/null || true
+    rm -f /tmp/reloop-worker.pid
+  fi
 }
 
 if [ "${1:-}" = "stop" ]; then
   stop_all
-  echo "已停止 :$BACKEND_PORT 和 :$FRONTEND_PORT"
+  echo "已停止 :$BACKEND_PORT、:$FRONTEND_PORT 和 worker"
   exit 0
 fi
 
@@ -32,6 +36,11 @@ cd "$ROOT"
 PYTHONPATH=. nohup reloop/.venv/bin/python -m uvicorn reloop.api.main:app \
   --host 127.0.0.1 --port $BACKEND_PORT > /tmp/reloop-backend.log 2>&1 &
 
+# outbox worker 常驻循环：每 5 秒把队列里的候选人投递到云端精品库（再投影飞书）
+# 没有它，录入的简历会永远积压在本地 outbox（queued）
+nohup sh -c 'while true; do PYTHONPATH=. reloop/.venv/bin/python -m reloop.ops.worker --limit 10 >> /tmp/reloop-worker.log 2>&1; sleep 5; done' > /dev/null 2>&1 &
+echo $! > /tmp/reloop-worker.pid
+
 # 前端
 cd "$ROOT/frontend"
 if [ "${1:-}" = "dev" ]; then
@@ -43,6 +52,7 @@ fi
 
 sleep 5
 curl -sf "http://127.0.0.1:$BACKEND_PORT/api/health" > /dev/null && echo "✅ 后端 :$BACKEND_PORT 已起（云端 reloop 库）" || { echo "❌ 后端启动失败，看 /tmp/reloop-backend.log"; exit 1; }
+echo "✅ worker 常驻中（outbox → 云端，5s 一轮；日志 /tmp/reloop-worker.log）"
 echo ""
 echo "演示入口： http://localhost:$FRONTEND_PORT/talent"
 echo "停止：     ./demo.sh stop"

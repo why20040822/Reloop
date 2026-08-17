@@ -54,13 +54,13 @@ EMPLOYMENT_STATUS_KEYWORDS = {
 # Multiple Chinese date formats commonly found in resumes.
 PERIOD_PATTERNS = [
     # 2020.03 - 2021.05 / 2020.03 - 至今 / 2020.3 - 至今
-    r"(?:19|20)\d{2}(?:\.\d{1,2})?\s*[-–—至]\s*(?:至今|(?:19|20)\d{2}(?:\.\d{1,2})?)",
+    r"(?:19|20)\d{2}(?:\.\d{1,2})?\s*[-–—至～~]\s*(?:至今|(?:19|20)\d{2}(?:\.\d{1,2})?)",
     # 2020年3月 - 2021年5月 / 2020年 3月 - 至今
-    r"(?:19|20)\d{2}年\s*\d{1,2}月\s*[-–—至]\s*(?:至今|(?:19|20)\d{2}年\s*\d{1,2}月)",
+    r"(?:19|20)\d{2}年\s*\d{1,2}月\s*[-–—至～~]\s*(?:至今|(?:19|20)\d{2}年\s*\d{1,2}月)",
     # 2020/03 - 2021/05 / 2020-03 - 至今
-    r"(?:19|20)\d{2}[/\-]\d{1,2}\s*[-–—至]\s*(?:至今|(?:19|20)\d{2}[/\-]\d{1,2})",
+    r"(?:19|20)\d{2}[/\-]\d{1,2}\s*[-–—至～~]\s*(?:至今|(?:19|20)\d{2}[/\-]\d{1,2})",
     # 2020 - 2021 / 2020 - 至今
-    r"(?:19|20)\d{2}\s*[-–—至]\s*(?:至今|(?:19|20)\d{2})",
+    r"(?:19|20)\d{2}\s*[-–—至～~]\s*(?:至今|(?:19|20)\d{2})",
 ]
 PERIOD_RE = re.compile("|".join(f"({p})" for p in PERIOD_PATTERNS))
 
@@ -166,10 +166,20 @@ def _extract_name(text: str, filename: str = "") -> str | None:
     if m and m.group(1) not in NAME_STOP_WORDS:
         return m.group(1)
     # Look for a standalone 2-4 character Chinese name near the top.
-    stop = {"在线简历", "个人简历", "简历", "基本信息", "工作经历", "教育经历", "项目经历", "求职意向", "个人优势"}
+    stop = {"在线简历", "个人简历", "简历", "基本信息", "工作经历", "教育经历", "项目经历", "求职意向", "个人优势",
+            # TTC 人才库页面 UI 按钮/标签（历史脏数据：「加入名单」曾被当姓名入库）
+            "加入名单", "快速推荐", "人才库插件", "返回TTC人才库", "水下信息", "画像", "推荐报告",
+            "重复信息", "更新记录", "备注", "投递", "加载中", "添加亮点总结",
+            "双一流", "985", "211", "年龄", "未知", "打招呼", "全文"}
     for line in text.splitlines()[:30]:
         line = line.strip()
         if line in stop:
+            continue
+        # TTC 页面脱敏姓名：骆女士|路女士 / 王先生
+        if re.fullmatch(r"[一-鿿·]{1,4}(?:女士|先生)([|｜][一-鿿·]{1,4}(?:女士|先生))?", line):
+            return line
+        # 真实姓名绝不含这些词根（TTC 标签行：留学经验/管理经验…）
+        if re.search(r"(经验|项目|管理|标签|经历|技能|留学|工作|教育|培训|语言|荣誉|证书|优势|评价|意向|期望|创业|出海|海外|信息|资料)", line):
             continue
         if re.fullmatch(r"[一-鿿·]{2,4}", line):
             return line
@@ -193,17 +203,40 @@ def _extract_period(line: str) -> str:
 def _looks_like_role(line: str) -> bool:
     return (
         bool(line)
-        and 2 <= len(line) <= 60
+        and 2 <= len(line) <= 20
         and bool(ROLE_KEYWORDS_RE.search(line))
         and not _match_period(line)
+        and not re.search(r"[@%｜|]|\d{7,}|[，,。；;：:]", line)
     )
 
 
 def _looks_like_company(line: str) -> bool:
-    if not line or not (2 <= len(line) <= 60):
+    # strip private-use-area glyphs（PDF 项目符号残留）再判断
+    line = re.sub(r"[--]", "", line).strip()
+    if not line or not (2 <= len(line) <= 25):
         return False
-    if INVALID_COMPANY_RE.search(line) or _match_period(line) or ROLE_KEYWORDS_RE.search(line):
+    # 公司名不含：邮箱/电话/百分比/竖线/句读——这些是联系方式行或整句业绩被误识别
+    if re.search(r"[@%｜|]|\d{7,}|[，,。；;：:、]", line):
         return False
+    # 时长行（（1.2年））、纯数字标点（6. / 03）、散文碎片（…等）、版块标签
+    if re.fullmatch(r"[（(][\d.]+\s*年?[）)]", line) or re.fullmatch(r"[\d./\s]+", line):
+        return False
+    if line.endswith("等") or "兼职" in line or line in {"重复信息", "个人信息", "自我评价", "个人项目", "个人优势"}:
+        return False
+    # 括号不配对 = 句子被截断的碎片
+    if line.count("（") != line.count("）") or line.count("(") != line.count(")"):
+        return False
+    # 城市名不是公司
+    if line in CITY_LIST or line in {"西雅图", "旧金山", "纽约", "洛杉矶", "硅谷", "伦敦", "新加坡", "东京"}:
+        return False
+    if INVALID_COMPANY_RE.search(line) or _match_period(line):
+        return False
+    if ROLE_KEYWORDS_RE.search(line):
+        # 公司名常含职位词根（品牌战略咨询/启承资本/创投基金）：去掉公司后缀后
+        # 整体仍是一个职位词的才否决（如「战略咨询」「产品经理」独行）
+        m = re.match(r"^(.+?)(有限公司|有限责任公司|股份有限公司|公司|集团|咨询|科技|网络|信息|投资|合伙|工作室|事务所|中心|研究院|企业|实业|控股|基金|资本)$", line)
+        if not m or ROLE_KEYWORDS_RE.fullmatch(m.group(1).strip()):
+            return False
     if RESPONSIBILITY_PREFIX_RE.match(line):
         return False
     return True
@@ -256,6 +289,32 @@ def _extract_experiences(text: str) -> tuple[list[WorkExperience], float]:
             break
 
     scan_lines = lines[section_start:section_end] if section_start is not None else lines
+
+    # Pass 0: period-first lines such as "2010 — 至今，中页品牌战略咨询"（部分中文简历把
+    # 日期放句首，公司跟在逗号后，职位在下一行）。
+    for idx, raw_line in enumerate(scan_lines):
+        line = raw_line.strip()
+        m = PERIOD_RE.match(line)
+        if not m:
+            continue
+        period = m.group(0)
+        rest = line[m.end():].strip(" ,，|｜、")
+        if not rest:
+            continue
+        company = ""
+        role = ""
+        if _looks_like_company(rest):
+            company = rest
+        else:
+            tokens = rest.split()
+            if len(tokens) >= 2 and _looks_like_company(" ".join(tokens[:-1])) and _looks_like_role(tokens[-1]):
+                company, role = " ".join(tokens[:-1]), tokens[-1]
+        if company and not role and idx + 1 < len(scan_lines):
+            nxt = scan_lines[idx + 1].strip()
+            if _looks_like_role(nxt):
+                role = nxt
+        if company:
+            entries.append(WorkExperience(company=company, role=role, period=period))
 
     # First pass: single-line entries.
     for line in scan_lines:
@@ -338,6 +397,19 @@ def _extract_experiences(text: str) -> tuple[list[WorkExperience], float]:
                     i += 3
                     continue
                 i += 1
+
+    # Final fallback: section-anchored adjacent pairs with no period anywhere
+    # （如「工作经历」节内 公司行 + 职位行 紧挨，日期独立成行在节外）。
+    if not entries and section_start is not None:
+        i = 0
+        while i < len(scan_lines) - 1:
+            first = scan_lines[i].strip()
+            second = scan_lines[i + 1].strip()
+            if _looks_like_company(first) and _looks_like_role(second):
+                entries.append(WorkExperience(company=first, role=second, period=""))
+                i += 2
+                continue
+            i += 1
 
     # Aggregate confidence for work experience extraction.
     if entries:

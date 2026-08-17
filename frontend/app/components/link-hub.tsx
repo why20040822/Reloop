@@ -1456,7 +1456,7 @@ export function SourcesPage() {
       const payload = await response.json();
       if (!response.ok || payload.ok === false) throw new Error(payload.detail || "录入失败");
       setImportDraft("");
-      setImportMessage(payload.candidate?.name ? `${payload.candidate.name} 已进入本地候选人队列` : "资料已进入本地候选人队列");
+      setImportMessage(payload.candidate?.name ? `${payload.candidate.name} 已进入云端投递队列，数秒内写入精品库（待复核）` : "资料已进入云端投递队列，数秒内写入精品库（待复核）");
       await refreshBackendStatus();
     } catch (error) {
       setImportMessage(error instanceof Error ? error.message : "录入失败");

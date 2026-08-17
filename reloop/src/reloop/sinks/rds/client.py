@@ -42,12 +42,21 @@ def _connection():
 
 
 def upsert_candidate(record: CandidateRecord) -> dict[str, Any]:
-    """Upsert one candidate by its stable fingerprint."""
+    """Upsert one candidate by its stable fingerprint.
+
+    列集对齐真实 cloud_candidates 表结构（曾用假设列 raw_profile 导致 1054
+    全量投递失败，outbox fail-closed 拦下——2026-08-14 修复为 parsed_json）。
+    """
 
     row = record.to_db_dict()
     row["fingerprint"] = record.fingerprint()
-    row["raw_profile"] = json.dumps(row, ensure_ascii=False, default=str)
-    columns = ["fingerprint", "name", "phone", "email", "raw_profile"]
+    row["parsed_json"] = json.dumps(record.model_dump(mode="json"), ensure_ascii=False, default=str)
+    columns = [
+        "fingerprint", "name", "phone", "email", "platform", "source_url", "source_type",
+        "title", "location", "current_company", "current_role", "undergraduate_school",
+        "expected_salary", "experiences_json", "education_json", "keywords_json", "raw_text",
+        "parsed_json",
+    ]
     values = [row.get(column, "") for column in columns]
     updates = ", ".join(f"{column} = VALUES({column})" for column in columns[1:])
     sql = (
