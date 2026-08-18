@@ -31,6 +31,9 @@ class Settings(BaseSettings):
     # 允许跨域的前端来源, 逗号分隔; "*" = 全部放通(开发期默认)。
     # 生产收紧示例: BRAINX_CORS_ALLOW_ORIGINS=https://your-frontend.example.com
     cors_allow_origins: str = "*"
+    # 是否允许未知 X-Owner-User-Id 自动注册用户。
+    # 开发期 True(联调方便); 生产设 False -> 未注册用户返回 401, 防止任填任进(无鉴权)。
+    auth_auto_register: bool = True
 
     # ---------- RDS MySQL (唯一数据库) ----------
     mysql_host: str = "127.0.0.1"
