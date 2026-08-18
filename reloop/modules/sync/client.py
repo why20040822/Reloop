@@ -118,11 +118,18 @@ class TalentSyncService:
         try:
             count = 0
             for t in talents:
-                row = self._upsert(db, owner_user_id, t)
+                # 走完整画像结构化: 补 value_score / resume_embedding / tendency_score,
+                # 并 upsert 落库(commit=False -> 只 flush, 由外层统一提交)。
+                # 这是闭环关键: 之前的 _upsert 直接写库跳过了结构化, 导致五因子全空、推荐分恒 0.5。
+                row = structuring_service.enrich_and_save(
+                    db, owner_user_id, t, source_id=t.get("source_id") or None, commit=False
+                )
                 if row:
                     count += 1
             if own_session:
                 db.commit()
+            else:
+                db.flush()  # 外部会话: 保证同请求内后续查询可见; 提交由 get_db 负责
             logger.info("[sync] owner=%s synced %d talents", owner_user_id, count)
             return count
         except Exception:  # noqa: BLE001
