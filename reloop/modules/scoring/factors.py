@@ -85,16 +85,22 @@ def build_activity_events(last_active_at=None,
 
 
 def min_max_normalize(values: Sequence[float]) -> list[float]:
-    """Min-Max 归一化到 [FACTOR_FLOOR,1]; 全相等时返回全 0.5。
+    """Min-Max 归一化到 [FACTOR_FLOOR,1]。
 
-    批量归一化的因子(活跃度/历史关系)加下限: 小样本池中"相对最低"
-    不等于"为零", 避免乘法模型把候选人直接归零误杀。
+    边界处理(修复冷启动白送分):
+      - 全部为 0(真的没有活跃/没有关系, 冷启动最常见): 返回全 FACTOR_FLOOR,
+        不再当成"中等 0.5"给所有人白送分, 保留区分度。
+      - 全部相等但非 0(都有相同强度的信号): 返回全 0.5(中性)。
+      - 其余: 正常 min-max, 且下限抬到 FACTOR_FLOOR 避免乘法模型误杀。
     """
     if not values:
         return []
     lo, hi = min(values), max(values)
     if hi - lo < 1e-9:
-        return [0.5] * len(values)
+        # 全相等: 区分"全为 0"与"全为相同非零值"
+        if hi < 1e-9:
+            return [FACTOR_FLOOR] * len(values)  # 全 0 -> 不白送分
+        return [0.5] * len(values)               # 全相等非 0 -> 中性
     return [max(FACTOR_FLOOR, (v - lo) / (hi - lo)) for v in values]
 
 
