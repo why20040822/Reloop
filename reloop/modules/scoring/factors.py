@@ -122,8 +122,17 @@ def cosine_similarity(a: Sequence[float], b: Sequence[float]) -> float:
 
 def match_score(jd_embedding: Sequence[float],
                 resume_embedding: Sequence[float]) -> float:
+    """岗位匹配度 ∈ [0,1]。
+
+    改进(修复离线哈希向量把最高权重因子退化成常数 0.5):
+    改用 max(0, cos) 而非线性 (cos+1)/2 ——
+      - 离线哈希向量非负, cos∈[0,1]: 无共同词 -> cos≈0 -> match≈0(不匹配就该低分),
+        有共同词 -> match 随重叠度上升, 区分度真实。
+      - 真实 embedding cos∈[-1,1]: 负相关(不相关)截断为 0, 语义上也正确。
+    这样"活跃但与岗位不匹配"的噪声候选人会被乘法模型真正压低, 而不是恒得 0.5。
+    """
     cos = cosine_similarity(jd_embedding, resume_embedding)
-    return (cos + 1.0) / 2.0
+    return max(0.0, min(1.0, cos))
 
 
 # =====================================================================
