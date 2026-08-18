@@ -50,7 +50,7 @@ function whyReason(bd) {
   const entries = FACTOR_KEYS.map((k) => [k, bd[k] ?? 0]);
   const top = entries.slice().sort((a, b) => b[1] - a[1])[0];
   const low = entries.slice().sort((a, b) => a[1] - b[1])[0];
-  return `${factorLabel(top[0])} ${top[1].toFixed(2)} 拉高排名；${factorLabel(low[0])} ${low[1].toFixed(2)} 是短板。`;
+  return `${factorLabel(top[0])} ${top[1].toFixed(2)} ${t("why_high")}；${factorLabel(low[0])} ${low[1].toFixed(2)} ${t("why_low")}。`;
 }
 
 const ring = (score) => {
@@ -77,7 +77,7 @@ async function renderHome() {
       <div><div class="kicker">${t("kicker")} / ${esc(CURRENT_POSITION)}</div><h1>${t("heroTitle")}</h1></div>
       <div class="run"><b>${new Date().toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" })}</b>${esc(reco.run_id || "")}</div>
     </header>
-    <nav class="positions" aria-label="岗位切换">${chips}</nav>
+    <nav class="positions" aria-label="${t("aria_switch_pos")}">${chips}</nav>
     <div class="stats"><div class="stat"><span>${t("stat_pool")}</span><strong>${reco.total_pool ?? "—"}</strong></div><div class="stat"><span>${t("stat_short")}</span><strong>${reco.shortlisted ?? items.length}</strong></div><div class="stat"><span>${t("stat_pending")}</span><strong id="pendingCount">${pending}</strong></div></div>
     <div class="board">${rows}</div>`;
 
@@ -222,7 +222,7 @@ async function renderSettings() {
       <div class="status-line" id="savedLine"></div>
     </div>
     <div class="card soft"><div class="label">${t("gaps_title")}</div>
-      <div class="hint">· CORS 未开：真实模式需后端 <code>allow_origins</code> 放通预览域名<br>· <code>GET /talents</code> 无分页/筛选<br>· 无「按人查互动」的 GET 接口<br>· 无重算 embedding / 仪表盘聚合接口<br>· feedback 不回包更新后的条目</div>
+      <div class="hint">${t("gaps_list")}</div>
     </div>`;
 
   view.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { LOCALE = b.dataset.loc; setCfg({ locale: LOCALE }); renderSettings(); renderTabs(); }));
