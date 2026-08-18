@@ -55,6 +55,49 @@ TENDENCY_PROMPT = (
 # 离线兜底 embedding: 字符 bigram 哈希 -> 固定维向量 (确定性, 无需 API)
 # 中文文本 bigram 能捕捉字级语义关联, 供开发/测试流程跑通用。
 # ---------------------------------------------------------------------
+_FALLBACK_DIM = 256
+
+
+def _extract_first_json_object(raw: str) -> str:
+    """从 LLM 输出中稳健提取【首个完整 JSON 对象】。
+
+    修复原贪婪正则 \\{.*\\} 的问题(会从第一个 { 吃到最后一个 }, 多块/尾随文本时抓错):
+    先剥 markdown 代码围栏, 再用括号计数(跳过字符串内的括号与转义)截取第一个平衡的 {...}。
+    """
+    if not raw:
+        return ""
+    s = raw.strip()
+    # 剥 ```json ... ``` / ``` ... ``` 围栏
+    if s.startswith("```"):
+        s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
+        s = re.sub(r"\s*```$", "", s).strip()
+    start = s.find("{")
+    if start == -1:
+        return ""
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start : i + 1]
+    return ""  # 括号不平衡: 视为无有效 JSON
+
+
 def _fallback_embed(text: str) -> list[float]:
     vec = [0.0] * _FALLBACK_DIM
     if not text:
