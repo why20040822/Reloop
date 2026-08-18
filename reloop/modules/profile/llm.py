@@ -55,9 +55,6 @@ TENDENCY_PROMPT = (
 # 离线兜底 embedding: 字符 bigram 哈希 -> 固定维向量 (确定性, 无需 API)
 # 中文文本 bigram 能捕捉字级语义关联, 供开发/测试流程跑通用。
 # ---------------------------------------------------------------------
-_FALLBACK_DIM = 256
-
-
 def _fallback_embed(text: str) -> list[float]:
     vec = [0.0] * _FALLBACK_DIM
     if not text:
