@@ -43,7 +43,10 @@ def activity_score(events: Iterable[dict], now: Optional[dt.datetime] = None,
     返回原始分(未归一化); 调用方对一批人才做 min-max 归一化。
     """
     if now is None:
-        now = dt.datetime.now()
+        # 统一时间基准为 UTC(naive), 与落库的 UTC 时间对齐, 消除本地/UTC 混用的 8 小时误差
+        now = _utcnow_naive()
+    else:
+        now = _to_naive_utc(now)
     if decay is None:
         decay = settings.activity_decay
 
@@ -55,9 +58,22 @@ def activity_score(events: Iterable[dict], now: Optional[dt.datetime] = None,
             continue
         if isinstance(occurred, str):
             occurred = dt.datetime.fromisoformat(occurred)
+        occurred = _to_naive_utc(occurred)
         days = max((now - occurred).total_seconds() / 86400.0, 0.0)
         total += w * math.exp(-decay * days)
     return total
+
+
+def _utcnow_naive() -> dt.datetime:
+    """当前 UTC 时间(naive), 与 models._now 落库的时间同基准。"""
+    return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+
+
+def _to_naive_utc(value: dt.datetime) -> dt.datetime:
+    """把可能带时区的 datetime 规整为 naive-UTC, 保证相减不混用 aware/naive。"""
+    if value.tzinfo is not None:
+        return value.astimezone(dt.timezone.utc).replace(tzinfo=None)
+    return value  # 已是 naive: 视为 UTC(落库时即 UTC)
 
 
 def build_activity_events(last_active_at=None,
