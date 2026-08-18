@@ -109,12 +109,12 @@ class LLMService:
         raw = self.chat(prompt)
         if not raw:
             return {}
+        block = _extract_first_json_object(raw)
+        if not block:
+            return {}
         try:
-            raw = raw.strip()
-            m = re.search(r"\{.*\}", raw, re.S)
-            if m:
-                raw = m.group(0)
-            return json.loads(raw.removeprefix("```json").removesuffix("```"))
+            data = json.loads(block)
+            return data if isinstance(data, dict) else {}
         except Exception:  # noqa: BLE001
             return {}
 
