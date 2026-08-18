@@ -16,13 +16,25 @@ router = APIRouter(prefix="/talents", tags=["人才库"])
 @router.get("", response_model=list[TalentOut], summary="列出我的人才库")
 def list_talents(
     keyword: str | None = None,
+    limit: int | None = None,
+    offset: int = 0,
     db: Session = Depends(get_db),
     owner: str = Depends(owner_user_id),
 ):
+    """列出人才库(按 owner 隔离)。
+
+    分页(向后兼容): 不传 limit -> 返回全部(旧行为, 前端/测试按数组消费);
+    传 limit -> 返回 [offset, offset+limit) 切片, 避免大库全量返回超重响应。
+    limit 上限 500, 防止一次拉过多。
+    """
     q = db.query(TalentProfile).filter(TalentProfile.owner_user_id == owner)
     if keyword:
         q = q.filter(TalentProfile.name.contains(keyword))
-    return q.order_by(TalentProfile.id.desc()).all()
+    q = q.order_by(TalentProfile.id.desc())
+    if limit is not None:
+        limit = max(1, min(int(limit), 500))
+        q = q.offset(max(0, int(offset))).limit(limit)
+    return q.all()
 
 
 @router.get("/{talent_id}", response_model=TalentOut, summary="人才详情")
