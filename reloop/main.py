@@ -7,9 +7,11 @@
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from reloop.api import positions, recommend, sync, talents
 from reloop.config import settings
@@ -60,3 +62,15 @@ app.include_router(sync.router)
 app.include_router(talents.router)
 app.include_router(positions.router)
 app.include_router(recommend.router)
+
+
+# 前后端合并部署: 后端直接伺服 webapp/ 静态前端 (同源, 免 CORS)。
+# 必须放在 API 路由之后挂载, 这样 /docs、/talents、/recommend 等接口优先匹配,
+# 其余路径(含 "/")回退到 SPA 入口 index.html (hash 路由, 无需服务端路由)。
+_WEBAPP_DIR = settings.webapp_path
+if settings.serve_webapp and _WEBAPP_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(_WEBAPP_DIR), html=True), name="webapp")
+    logger.info("[startup] serving webapp from %s", _WEBAPP_DIR)
+else:
+    logger.info("[startup] webapp serving disabled (serve_webapp=%s, dir=%s)",
+                settings.serve_webapp, _WEBAPP_DIR)

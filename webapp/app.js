@@ -1,5 +1,5 @@
 // Reloop 触达工作台 — 路由 + 视图（Home / Talents / Talent detail / Positions / Settings）
-import { api, getCfg, setCfg, isMock } from "./data/provider.js";
+import { api, getCfg, setCfg, useMock } from "./data/provider.js";
 import { STRINGS } from "./i18n.js";
 
 const view = document.getElementById("view");
@@ -211,9 +211,11 @@ async function renderSettings() {
   const cfg = getCfg();
   view.innerHTML = `
     <header class="mast"><div><div class="kicker">${t("kicker")}</div><h1>${t("settings_title")}</h1></div>
-      <div class="run"><b>${isMock() ? t("mode_mock") : t("mode_api")}</b></div></header>
+      <div class="run"><b>${useMock() ? t("mode_mock") : t("mode_api")}</b></div></header>
     <div class="card"><div class="label">${t("data_source")}</div>
-      <div class="api"><code>NEXT_PUBLIC_RELOOP_API_BASE=${isMock() ? "mock" : esc(cfg.apiBase)}</code><span class="badge ${isMock() ? "mut" : ""}">${isMock() ? "SAMPLE" : "LIVE"}</span></div>
+      <div class="api"><code>MODE=${useMock() ? "mock" : (cfg.apiBase || "同源")}</code><span class="badge ${useMock() ? "mut" : ""}">${useMock() ? "SAMPLE" : "LIVE"}</span></div>
+      <div class="field"><span class="hint">${t("mode_label")}</span>
+        <div class="seg"><button data-mode="live" class="${cfg.mode !== "mock" ? "on" : ""}">${t("ds_api")}</button><button data-mode="mock" class="${cfg.mode === "mock" ? "on" : ""}">${t("ds_mock")}</button></div></div>
       <div class="field"><span class="hint">${t("api_base")}</span><input id="apiBase" placeholder="${t("api_base_ph")}" value="${esc(cfg.apiBase)}"></div>
       <div class="field"><span class="hint">${t("owner_id")}</span><input id="ownerId" value="${esc(cfg.ownerId)}"></div>
       <div class="field"><span class="hint">${t("language")}</span>
@@ -225,7 +227,10 @@ async function renderSettings() {
       <div class="hint">${t("gaps_list")}</div>
     </div>`;
 
-  view.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => { LOCALE = b.dataset.loc; setCfg({ locale: LOCALE }); renderSettings(); renderTabs(); }));
+  view.querySelectorAll(".seg button").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.loc) { LOCALE = b.dataset.loc; setCfg({ locale: LOCALE }); renderSettings(); renderTabs(); }
+    if (b.dataset.mode) { setCfg({ mode: b.dataset.mode }); renderSettings(); }
+  }));
   view.querySelector("#saveCfg").addEventListener("click", () => {
     setCfg({ apiBase: view.querySelector("#apiBase").value.trim(), ownerId: view.querySelector("#ownerId").value.trim(), locale: LOCALE });
     view.querySelector("#savedLine").textContent = t("saved");

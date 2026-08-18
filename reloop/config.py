@@ -9,6 +9,7 @@
 """
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -34,6 +35,10 @@ class Settings(BaseSettings):
     # 是否允许未知 X-Owner-User-Id 自动注册用户。
     # 开发期 True(联调方便); 生产设 False -> 未注册用户返回 401, 防止任填任进(无鉴权)。
     auth_auto_register: bool = True
+
+    # ---------- 前端静态托管（前后端合并单进程部署） ----------
+    serve_webapp: bool = True      # True=后端直接伺服 webapp/ 静态前端, 一条命令起前后端
+    webapp_dir: str = ""           # 留空=自动取项目根目录下的 webapp/; 也可填绝对路径覆盖
 
     # ---------- RDS MySQL (唯一数据库) ----------
     mysql_host: str = "127.0.0.1"
@@ -82,6 +87,13 @@ class Settings(BaseSettings):
         if raw in ("", "*"):
             return ["*"]
         return [o.strip() for o in raw.split(",") if o.strip()]
+
+    @property
+    def webapp_path(self) -> Path:
+        """前端静态目录的绝对路径(serve_webapp 用)。"""
+        if self.webapp_dir:
+            return Path(self.webapp_dir).resolve()
+        return Path(__file__).resolve().parent.parent / "webapp"
 
     @property
     def sync_dsn(self) -> str:
