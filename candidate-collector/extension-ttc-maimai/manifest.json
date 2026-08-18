@@ -1,0 +1,29 @@
+{
+  "manifest_version": 3,
+  "name": "TTC 候选人收藏器",
+  "version": "0.7.3",
+  "description": "将已授权的 TTC/脉脉候选人和PDF原件自动导入飞书多维表格",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "http://127.0.0.1:8765/*",
+    "http://localhost:8765/*"
+  ],
+  "background": {"service_worker": "background.js", "type": "module"},
+  "content_scripts": [
+    {
+      "matches": ["https://app.ttcadvisory.com/*", "https://*.maimai.cn/*"],
+      "exclude_matches": ["https://*.maimai.cn/platform/login*"],
+      "js": ["content/network_interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://app.ttcadvisory.com/*", "https://*.maimai.cn/*"],
+      "exclude_matches": ["https://*.maimai.cn/platform/login*"],
+      "js": ["content/retry_policy.js", "content/auto_import.js"],
+      "run_at": "document_start",
+      "world": "ISOLATED"
+    }
+  ],
+  "action": {"default_popup": "popup.html", "default_title": "TTC自动导入飞书"}
+}

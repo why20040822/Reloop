@@ -1,0 +1,197 @@
+{
+  "base_token": "V37YbPDixa7Aw5sUjxncweV4nyx",
+  "table_id": "tblpNAH9tV1pqulm",
+  "table_name": "Otto1",
+  "fallback_table_id": "tblEHeMS9wk6g0ui",
+  "fallback_table_name": "Otto2",
+  "version": "2026-07-15-browser-pdf-v2",
+  "notes": "Otto1 主表，表级占用时回退 Otto2；写入前按字段名重新解析真实字段 ID。",
+  "fields": {
+    "name": {
+      "name": "姓名",
+      "field_id": "fldf3crcUq",
+      "type": "text",
+      "required": false,
+      "candidate_field": "name"
+    },
+    "phone": {
+      "name": "电话",
+      "field_id": "fldBGFiXIm",
+      "type": "text",
+      "required": false,
+      "candidate_field": "phone"
+    },
+    "email": {
+      "name": "邮箱",
+      "field_id": "fldM253KiV",
+      "type": "text",
+      "required": false,
+      "candidate_field": "email"
+    },
+    "current_company": {
+      "name": "公司",
+      "field_id": "fldW3g01R6",
+      "type": "text",
+      "required": false,
+      "candidate_field": "current_company"
+    },
+    "current_title": {
+      "name": "岗位",
+      "field_id": "fldkojuei2",
+      "type": "text",
+      "required": false,
+      "candidate_field": "current_title"
+    },
+    "school": {
+      "name": "学校",
+      "field_id": "fldBCt0xyg",
+      "type": "text",
+      "required": false,
+      "candidate_field": "school"
+    },
+    "degree": {
+      "name": "学历",
+      "field_id": "flddwPse36",
+      "type": "select",
+      "required": false,
+      "candidate_field": "education",
+      "options": ["专科", "本科", "硕士", "博士", "其他"],
+      "formatter": "degree"
+    },
+    "experience_years": {
+      "name": "工作年限",
+      "field_id": "fldHDocybE",
+      "type": "number",
+      "required": false,
+      "candidate_field": null,
+      "formatter": "infer_experience_years"
+    },
+    "current_location": {
+      "name": "工作地点",
+      "field_id": "fldY8BKZU6",
+      "type": "select",
+      "required": false,
+      "candidate_field": "current_location",
+      "options": ["北京", "上海", "深圳", "广州", "杭州", "成都", "苏州", "南京", "武汉", "西安", "其他"],
+      "fallback": "其他"
+    },
+    "expected_salary": {
+      "name": "期望薪资",
+      "field_id": "fld6mUsiUu",
+      "type": "text",
+      "required": false,
+      "candidate_field": "expected_salary"
+    },
+    "current_salary": {
+      "name": "当前薪资",
+      "field_id": "fldSk8STpL",
+      "type": "text",
+      "required": false,
+      "candidate_field": null
+    },
+    "source_channel": {
+      "name": "来源渠道",
+      "field_id": "fldyElBZ82",
+      "type": "select",
+      "required": false,
+      "candidate_field": null,
+      "constant": "Otto人才库上传",
+      "options": ["PDF批量导入", "飞书表单", "顾问上传", "猎头合作", "其他", "Otto人才库上传"],
+      "fallback": "其他"
+    },
+    "looking_for_opportunity": {
+      "name": "是否看机会",
+      "field_id": "flde4batGS",
+      "type": "select",
+      "required": false,
+      "candidate_field": "opportunity_intent",
+      "options": ["是", "否", "无信息"],
+      "formatter": "boolean_to_select",
+      "fallback": "无信息"
+    },
+    "skill_tags": {
+      "name": "技术栈",
+      "field_id": "fldFljl9ER",
+      "type": "text",
+      "required": false,
+      "candidate_field": "tech_stack"
+    },
+    "job_type": {
+      "name": "职位类型",
+      "field_id": "fldJVk8lUQ",
+      "type": "select",
+      "required": false,
+      "candidate_field": "current_title",
+      "options": ["算法", "前端", "后端", "全栈", "产品", "数据", "基础架构", "运营", "其他"],
+      "formatter": "infer_job_type",
+      "fallback": "其他"
+    },
+    "ttc_pid": {
+      "name": "TTC PID",
+      "field_id": "fldut7OOpo",
+      "type": "text",
+      "required": false,
+      "candidate_field": "source_record_id",
+      "formatter": "ttc_pid"
+    },
+    "attachment_sha256": {
+      "name": "TTC PDF SHA256",
+      "field_id": "fldnCHW0uy",
+      "type": "text",
+      "required": false,
+      "candidate_field": "attachment_sha256"
+    },
+    "ai_parse_raw": {
+      "name": "简历解析内容",
+      "field_id": "fldPDbhL12",
+      "type": "text",
+      "required": false,
+      "candidate_field": "raw_text",
+      "max_length": 95000
+    },
+    "original_talent_link": {
+      "name": "人才库链接",
+      "field_id": "fldngWnXK0",
+      "type": "text",
+      "required": false,
+      "candidate_field": "source_url"
+    },
+    "consultant_notes": {
+      "name": "备注信息",
+      "field_id": "fld5WdVaSP",
+      "type": "text",
+      "required": false,
+      "candidate_field": "notes",
+      "max_length": 95000
+    },
+    "resume_attachment": {
+      "name": "简历附件",
+      "field_id": "fldXj7nrAs",
+      "type": "attachment",
+      "required": false,
+      "candidate_field": "original_attachment_path"
+    }
+  },
+  "readonly_fields": {
+    "talent_id": {
+      "name": "人才ID",
+      "field_id": "fld3Wby9yq",
+      "type": "auto_number"
+    },
+    "created_at": {
+      "name": "创建时间",
+      "field_id": "fld0XiaNkt",
+      "type": "created_at"
+    },
+    "updated_at": {
+      "name": "最近更新时间",
+      "field_id": "fldEMqJUA3",
+      "type": "updated_at"
+    },
+    "talent_dynamics": {
+      "name": "人才动态",
+      "field_id": "fldvzZ6Nyc",
+      "type": "link"
+    }
+  }
+}

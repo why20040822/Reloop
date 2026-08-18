@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ot小插件</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --background: #ffffff;
+      --surface: #fafafa;
+      --border: #e7e7ea;
+      --text: #18181b;
+      --muted: #71717a;
+      --accent: #2563eb;
+      --success: #16a34a;
+      --danger: #dc2626;
+    }
+    * { box-sizing: border-box; }
+    body {
+      width: 320px;
+      margin: 0;
+      background: var(--background);
+      color: var(--text);
+      font: 13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    }
+    .app { padding: 20px 16px 16px; }
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .logo {
+      width: 28px;
+      height: 28px;
+      flex: 0 0 auto;
+      border-radius: 7px;
+    }
+    h1 {
+      flex: 1;
+      margin: 0;
+      font-size: 15px;
+      font-weight: 600;
+      letter-spacing: -.01em;
+    }
+    .version {
+      color: var(--muted);
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+    }
+    .card {
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--background);
+      box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.08);
+    }
+    .card + .card { margin-top: 12px; }
+    .card-heading {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      flex: 0 0 auto;
+      border-radius: 999px;
+      background: var(--success);
+    }
+    .status-dot.is-running {
+      background: var(--accent);
+      animation: breathe 1.6s ease-in-out infinite;
+    }
+    .status-dot.is-error { background: var(--danger); }
+    @keyframes breathe {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,.3); }
+      50% { box-shadow: 0 0 0 5px rgba(37,99,235,0); }
+    }
+    .card-title { font-size: 13px; font-weight: 600; }
+    .status-message {
+      margin: 8px 0 0 16px;
+      color: var(--muted);
+      font-size: 12px;
+      overflow-wrap: anywhere;
+    }
+    .progress { margin: 14px 0 0 16px; }
+    .progress-meta {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .progress-track {
+      height: 5px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #e9eefc;
+    }
+    .progress-bar {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+      transition: width .25s ease;
+    }
+    .recent-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .candidate-name {
+      min-width: 0;
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+    .platform-tag {
+      padding: 2px 7px;
+      border-radius: 999px;
+      background: #eff6ff;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .relative-time { margin-top: 6px; color: var(--muted); font-size: 12px; }
+    .toggle-button {
+      width: 100%;
+      margin-top: 10px;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .toggle-button.is-on {
+      border-color: var(--accent);
+      background: #eff6ff;
+      color: var(--accent);
+    }
+    .auto-stats { margin-top: 8px; color: var(--muted); font-size: 12px; }
+    .note {
+      margin: 16px 4px 0;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    [hidden] { display: none !important; }
+    @media (prefers-reduced-motion: reduce) {
+      .status-dot.is-running { animation: none; }
+      .progress-bar { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="header">
+      <img class="logo" src="icon32.plasmo.76b92899.png" alt="">
+      <h1>ot小插件</h1>
+      <span id="version" class="version"></span>
+    </header>
+
+    <section class="card" aria-live="polite">
+      <div class="card-heading">
+        <span id="statusDot" class="status-dot" aria-hidden="true"></span>
+        <span id="statusTitle" class="card-title">状态正常</span>
+      </div>
+      <p id="statusMessage" class="status-message">等待候选人页面</p>
+      <div id="progress" class="progress" hidden>
+        <div class="progress-meta">
+          <span>导入进度</span>
+          <span id="progressText">0 / 0</span>
+        </div>
+        <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+          <div id="progressBar" class="progress-bar"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="recentCard" class="card" hidden>
+      <div class="card-title">最近导入</div>
+      <div class="recent-row">
+        <span id="candidateName" class="candidate-name"></span>
+        <span id="platformTag" class="platform-tag">候选人</span>
+      </div>
+      <div id="relativeTime" class="relative-time">刚刚</div>
+    </section>
+
+    <section class="card">
+      <div class="card-title">BOSS 推荐页全天自动入库</div>
+      <button id="autoToggle" class="toggle-button" type="button">开启自动入库</button>
+      <div id="autoStats" class="auto-stats">在 /web/chat/recommend 页面自动逐个读取推荐候选人。</div>
+    </section>
+
+    <p class="note">自动模式已启用：打开已授权的候选人页面即会自动读取并写入云端人才库，无需手动点击。</p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

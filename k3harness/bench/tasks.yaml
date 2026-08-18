@@ -1,0 +1,98 @@
+# K3 harness 基准任务集 v1
+# 契约：run_bench 把 fixture_dir 复制到 workspace 作为 cwd，逐字发送 prompt，
+# 结束后在该 workspace 跑 accept 脚本（exit 0 = 通过）。
+# 两腿（claude -p / k3h run）使用完全相同的 prompt 与 max_turns。
+
+max_turns: 30
+tasks:
+  - id: T1
+    category: 解析器修复
+    fixture: fixtures/t1
+    prompt: |
+      当前目录有一个简历解析器 parser.py 和 samples/ 下 3 份简历文本。
+      解析器有 bug：姓名、手机号、期望城市字段提取错误。
+      运行 python3 parser.py samples/xxx.txt 可看到当前输出。
+      修复 parser.py，使 3 份样本的 name/phone/city 字段全部正确。只改 parser.py。
+    accept: accept/accept_T1.py
+
+  - id: T2
+    category: 数据修复/回填
+    fixture: fixtures/t2
+    prompt: |
+      当前目录有 daemon.db（SQLite，candidates 表 20 行，其中若干行 name 字段为空）
+      和 profiles.json（id -> 正确姓名的映射）。
+      要求：1) 先输出将受影响行数的统计；2) 把缺失的 name 回填进 daemon.db；
+      3) 不要改动已有非空 name 的行。
+    accept: accept/accept_T2.py
+
+  - id: T3
+    category: JD匹配/评分
+    fixture: fixtures/t3
+    prompt: |
+      当前目录有 jd.txt（财务负责人岗位 JD）和 resumes/ 下 20 份简历 JSON（含 raw_text 字段）。
+      逐份阅读简历，按 JD 匹配度打分（0-100），输出 top10.json：
+      一个数组，按分数降序，每项含 rank, file, score, reason（一句话中文理由）字段。
+    accept: accept/accept_T3.py
+
+  - id: T4
+    category: 批量入库dry-run
+    fixture: fixtures/t4
+    prompt: |
+      当前目录 resumes/ 下有 10 份简历文本，existing.csv 是人才库已有记录（姓名,手机号）。
+      生成入库计划 import_plan.json：数组，每项含 name, phone, action 字段，
+      action 为 "insert"（新入库）或 "skip_duplicate"（与 existing.csv 按手机号判重）。
+      只生成计划文件，不写任何数据库。
+    accept: accept/accept_T4.py
+
+  - id: T5
+    category: 运维脚本
+    fixture: fixtures/t5
+    prompt: |
+      当前目录 logs/ 下有若干 .log 文件。写一个脚本统计每个文件的 ERROR 行数，
+      输出 report.md，内容为 markdown 表格：| 文件 | ERROR 数 |，按 ERROR 数降序。
+    accept: accept/accept_T5.py
+
+  - id: T6
+    category: 长文归纳
+    fixture: fixtures/t6
+    prompt: |
+      当前目录有 minutes1.txt 和 minutes2.txt 两份会议智能纪要。
+      通读后输出 summary.json：{"decisions": [...], "action_items": [{"item": ..., "owner": ...}], "key_quotes": [...]}，
+      每项都是中文字符串，提取两份纪要中最重要的决策、待办（含负责人）和关键原话，总数不超过 15 条。
+    accept: accept/accept_T6.py
+
+  - id: T7
+    category: 入库链路改造
+    fixture: fixtures/t7
+    prompt: |
+      当前目录是一个小型数据管道项目：main.py 调用 loader.py 和 db.py 把 data.jsonl 写入 local.db。
+      给 main.py 增加 --dry-run 参数：带上时只打印将写入的行数和样本（前3行），不写库；
+      不带时保持原有行为。需要读懂 loader.py 和 db.py 的接口再改。
+    accept: accept/accept_T7.py
+
+  - id: T8
+    category: 插件调试
+    fixture: fixtures/t8
+    prompt: |
+      当前目录 snapshot.html 是飞书网页的 DOM 快照，bridge.user.js 是油猴脚本。
+      脚本的 MESSAGE_SELECTOR 选择器失效了（匹配不到快照中的消息列表容器）。
+      阅读快照定位正确的消息列表容器节点，修复 bridge.user.js 中的选择器。只改选择器相关代码。
+    accept: accept/accept_T8.py
+
+  - id: T9
+    category: 文档撰写
+    fixture: fixtures/t9
+    prompt: |
+      当前目录有 api_doc.md（现有 API 文档）和 tech_plan.md（技术规划节选）。
+      为 api_doc.md 增补"候选人入库"一节：包含 POST /api/ingest 接口的
+      请求字段表、响应示例、错误码、幂等说明，风格与现有文档一致。直接编辑 api_doc.md。
+    accept: accept/accept_T9.py
+
+  - id: T10
+    category: 飞书三段式
+    fixture: fixtures/t10
+    prompt: |
+      当前目录 mock_base.py 是飞书多维表格的本地模拟（状态存 state.json），README.md 有用法。
+      任务：创建一张"候选人"表（字段：姓名/手机号/公司），并写入 records.csv 里的 5 条记录。
+      要求严格遵守三段式：先 dry-run 看计划，确认无误后再 apply。完成后 state.json 应记录完整流程。
+    accept: accept/accept_T10.py

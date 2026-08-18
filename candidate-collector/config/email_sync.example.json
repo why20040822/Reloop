@@ -1,0 +1,13 @@
+{
+  "_comment": "Example email sync config. Copy to email-sync.json and customize. Credentials are NOT stored here; use environment variables or macOS keychain.",
+  "imap_server": "imap.gmail.com",
+  "imap_port": 993,
+  "imap_ssl": true,
+  "use_keychain": true,
+  "query": "after:2026/07/06 has:attachment {filename:pdf filename:doc filename:docx filename:png filename:jpg filename:jpeg}",
+  "allowed_extensions": [".pdf", ".doc", ".docx", ".png", ".jpg", ".jpeg", ".tiff"],
+  "max_email_size_mb": 16,
+  "max_file_size_mb": 12,
+  "watch_interval_seconds": 300,
+  "api_base": "http://127.0.0.1:8765"
+}

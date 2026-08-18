@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>简历评估打分窗口</title>
+  <style>
+    :root{--bg:#f4f1ea;--ink:#172026;--card:#fffdf8;--line:#d7d1c5;--accent:#0d6f63;--hot:#b55036;--muted:#6d746f;--warn:#a97b1f}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.55 system-ui,-apple-system,"PingFang SC",sans-serif}
+    .wrap{max-width:1280px;margin:auto;padding:24px}
+    header{display:flex;justify-content:space-between;gap:20px;align-items:end;margin-bottom:18px}
+    h1{font-size:28px;letter-spacing:-1px;margin:0}.sub{color:var(--muted);max-width:700px}
+    .badge{background:#dcebe7;color:var(--accent);padding:6px 10px;border-radius:999px;font-weight:700;text-decoration:none}
+    .layout{display:grid;grid-template-columns:420px 1fr;gap:16px;align-items:start}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:0 8px 24px #26352c0c}
+    .card h2{font-size:16px;margin:0 0 12px}
+    input,textarea,button{font:inherit}
+    input[type=text],textarea{width:100%;border:1px solid var(--line);border-radius:9px;padding:10px;background:white}
+    textarea{min-height:110px;resize:vertical;font-size:13px}
+    button{border:0;border-radius:9px;padding:10px 14px;background:var(--accent);color:white;font-weight:700;cursor:pointer}
+    button.secondary{background:#ebe7dd;color:var(--ink)}
+    button:disabled{opacity:.5;cursor:wait}
+    .row{display:flex;gap:8px;margin-top:10px}.row>*:first-child{flex:1}
+    .notice{color:var(--muted);font-size:12px;margin-top:8px}.error{color:#a3342f}.ok{color:var(--accent)}
+    label{font-size:12px;color:var(--muted);display:block;margin:10px 0 4px}
+    .weights{margin-top:6px}.weight-row{display:grid;grid-template-columns:1fr 90px 34px;gap:8px;align-items:center;margin:4px 0}
+    .weight-row input[type=range]{width:100%}
+    .weight-val{font-weight:700;text-align:right}
+    .weight-total{font-size:12px;color:var(--muted);margin-top:4px}.weight-total.bad{color:var(--hot);font-weight:700}
+    .overall{display:flex;align-items:baseline;gap:12px;margin-bottom:6px}
+    .overall b{font-size:40px;color:var(--accent)}
+    .overall b.hot{color:var(--hot)}.overall b.warn{color:var(--warn)}
+    .tier{font-weight:800;font-size:16px}
+    .cap{background:#f7e8e3;color:var(--hot);border-radius:9px;padding:8px 10px;margin:8px 0;font-size:13px}
+    .dim{border-top:1px solid #ebe6dc;padding:10px 0}
+    .dim-head{display:flex;justify-content:space-between;gap:10px}
+    .dim-name{font-weight:700}.dim-core{color:var(--hot);font-size:12px;margin-left:4px}
+    .bar{height:8px;background:#eee9df;border-radius:99px;margin:6px 0;overflow:hidden}
+    .bar i{display:block;height:100%;background:var(--accent);border-radius:99px}
+    .ev{font-size:12px;color:var(--muted);margin:2px 0 2px 10px}
+    .pill{display:inline-block;padding:3px 8px;border-radius:999px;background:#eee9df;margin:2px;font-size:12px}
+    .pill.hot{background:#f7e8e3;color:var(--hot)}
+    .pill.good{background:#dcebe7;color:var(--accent)}
+    h3{font-size:14px;margin:16px 0 6px}
+    ul{margin:4px 0;padding-left:18px}
+    .reco{background:#eef4f1;border:1px solid #cfe2da;border-radius:10px;padding:12px;white-space:pre-wrap;font-size:13px}
+    .section{margin-bottom:14px}
+    .empty{padding:60px 20px;text-align:center;color:var(--muted)}
+    @media(max-width:950px){.layout{grid-template-columns:1fr}header{display:block}}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div><h1>简历评估打分窗口</h1><div class="sub">传简历（文件或粘贴文本）+ 输入 JD → 按 JD 维度权重逐项打分，≥7 分自动生成可发客户的推荐语。</div></div>
+    <div style="display:flex;gap:10px"><a href="/" class="badge">返回收藏器</a><span class="badge">规则打分 · 仅本机</span></div>
+  </header>
+  <div class="layout">
+    <div>
+      <div class="card">
+        <h2>1 · 简历</h2>
+        <input id="file" type="file" accept=".pdf,.doc,.docx,.txt">
+        <div class="notice">或直接在下方粘贴简历文本（文件优先）</div>
+        <textarea id="resumeText" placeholder="粘贴简历文本..."></textarea>
+        <label>候选人姓名（可选，留空取文件名）</label>
+        <input id="candName" type="text" placeholder="张三">
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h2>2 · JD 与打分标准</h2>
+        <textarea id="jdText" placeholder="粘贴 JD 全文。可直接在 JD 里写权重行，如：&#10;供应链业财 40&#10;硬件行业 20&#10;预算经营 15&#10;海外财务 15&#10;一号位能力 10"></textarea>
+        <div class="notice">维度权重默认从 JD 自动推出（JD 内显式权重行 &gt; 内置财务负责人模板 &gt; 主题库匹配 &gt; 通用模板），也可在下方手动微调：</div>
+        <div class="weights" id="weights"></div>
+        <div class="weight-total" id="weightTotal"></div>
+        <div class="row">
+          <button id="scoreBtn" onclick="score()">开始打分</button>
+          <button class="secondary" onclick="inferWeights()">从 JD 重推权重</button>
+        </div>
+      </div>
+    </div>
+    <div class="card" id="resultCard"><div class="empty">打分结果将显示在这里：综合匹配度 / 各维度证据 / 分档结论 / 推荐语</div></div>
+  </div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let dims=[]; // [{name,weight,core}]
+
+function renderWeights(){
+  $('weights').innerHTML=dims.map((d,i)=>`<div class="weight-row"><span>${esc(d.name)}${d.core?'<span class="dim-core">核心</span>':''}</span><input type="range" min="0" max="100" step="5" value="${d.weight}" oninput="setWeight(${i},this.value)"><span class="weight-val" id="wv${i}">${d.weight}</span></div>`).join('');
+  updateTotal();
+}
+function setWeight(i,v){dims[i].weight=Number(v);$('wv'+i).textContent=v;updateTotal()}
+function updateTotal(){
+  const t=dims.reduce((a,d)=>a+d.weight,0);
+  $('weightTotal').textContent=dims.length?`权重合计 ${t}${t===100?'':'（建议调到 100，提交时自动归一）'}`:'';
+  $('weightTotal').className='weight-total'+(t!==100?' bad':'');
+}
+async function inferWeights(){
+  const jd=$('jdText').value.trim();
+  if(jd.length<5)return alert('请先粘贴 JD');
+  // 用一份占位简历调一次接口，只为拿维度配置
+  const r=await fetch('/api/resume-score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resume_text:'占位简历文本，仅用于推导维度权重',jd_text:jd})});
+  const j=await r.json();
+  if(r.ok){dims=j.result.dimensions.map(d=>({name:d.name,weight:d.weight,core:d.core}));renderWeights()}
+}
+function weightsConfig(){
+  if(!dims.length)return null;
+  return dims.map(d=>({name:d.name,weight:d.weight,core:d.core}));
+}
+async function score(){
+  const jd=$('jdText').value.trim();
+  if(jd.length<5)return alert('请先粘贴 JD');
+  const f=$('file').files[0];
+  const resumeText=$('resumeText').value.trim();
+  if(!f&&resumeText.length<10)return alert('请上传简历文件或粘贴简历文本');
+  $('scoreBtn').disabled=true;$('resultCard').innerHTML='<div class="empty">正在打分...</div>';
+  try{
+    let resp;
+    if(f){
+      const fd=new FormData();
+      fd.append('file',f);fd.append('jd_text',jd);
+      fd.append('candidate_name',$('candName').value.trim());
+      const wc=weightsConfig();if(wc)fd.append('weights_config',JSON.stringify(wc));
+      if(resumeText)fd.append('resume_text',resumeText);
+      resp=await fetch('/api/resume-score',{method:'POST',body:fd});
+    }else{
+      resp=await fetch('/api/resume-score',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({resume_text:resumeText,jd_text:jd,candidate_name:$('candName').value.trim(),weights_config:weightsConfig()})});
+    }
+    const j=await resp.json();
+    if(!resp.ok)throw Error(j.detail||'打分失败');
+    renderResult(j.result);
+    if(!dims.length){dims=j.result.dimensions.map(d=>({name:d.name,weight:d.weight,core:d.core}));renderWeights()}
+  }catch(e){
+    $('resultCard').innerHTML=`<div class="empty error">${esc(e.message)}</div>`;
+  }finally{$('scoreBtn').disabled=false}
+}
+function scoreClass(v){return v>=8.5?'':v>=7?'warn':'hot'}
+function renderResult(r){
+  const dimsHtml=r.dimensions.map(d=>`
+    <div class="dim">
+      <div class="dim-head"><span class="dim-name">${esc(d.name)}${d.core?'<span class="dim-core">核心</span>':''}</span><span>权重 ${d.weight} · <b>${d.score}/10</b></span></div>
+      <div class="bar"><i style="width:${d.score*10}%"></i></div>
+      ${d.evidence.length?d.evidence.map(e=>`<div class="ev">证据：${esc(e)}</div>`).join(''):'<div class="ev">未找到证据</div>'}
+    </div>`).join('');
+  const list=a=>a&&a.length?`<ul>${a.map(x=>`<li>${esc(x)}</li>`).join('')}</ul>`:'<div class="notice">无</div>';
+  const pills=(a,cls)=>a&&a.length?a.map(x=>`<span class="pill ${cls}">${esc(x)}</span>`).join(''):'<span class="notice">无</span>';
+  $('resultCard').innerHTML=`
+    <div class="overall"><b class="${scoreClass(r.overall)}">${r.overall}</b><span>/10</span><span class="tier">${esc(r.tier_label)}</span></div>
+    <div>${esc(r.conclusion)}</div>
+    ${r.cap_applied?`<div class="cap">已触发封顶规则：${esc(r.cap_rule)}，光环背景不能替代核心能力</div>`:''}
+    <div class="notice">维度权重来源：${esc(r.dimension_source)}</div>
+    <div class="section"><h3>各维度得分及简历证据</h3>${dimsHtml}</div>
+    <div class="section"><h3>一眼识别</h3>
+      <div>强匹配关键词：${pills(r.strong_keywords,'good')}</div>
+      <div>优先公司/背景：${pills(r.priority_backgrounds,'good')}</div>
+      <div>低匹配信号：${pills(r.low_match_signals,'hot')}</div>
+    </div>
+    <div class="section"><h3>核心优势</h3>${list(r.strengths)}</div>
+    <div class="section"><h3>关键缺口</h3>${list(r.gaps)}</div>
+    <div class="section"><h3>待验证问题</h3>${list(r.open_questions)}</div>
+    ${r.mismatch_reason?`<div class="section"><h3>不匹配原因</h3><div class="error">${esc(r.mismatch_reason)}</div></div>`:''}
+    <div class="section"><h3>相对位置</h3><div class="notice">${esc(r.relative_position)}</div></div>
+    ${r.recommendation?`<div class="section"><h3>推荐语（可发客户）</h3><div class="reco" id="reco">${esc(r.recommendation)}</div><div class="row"><button class="secondary" onclick="copyReco()">一键复制推荐语</button></div></div>`:''}
+  `;
+}
+async function copyReco(){
+  try{await navigator.clipboard.writeText($('reco').textContent);event.target.textContent='已复制';}
+  catch(e){alert('复制失败，请手动选择复制')}
+}
+</script>
+</body>
+</html>

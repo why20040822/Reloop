@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TTC 云端数据库管理面板</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", sans-serif; background: #f5f6f8; color: #1f2329; padding: 24px; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #8f959e; font-size: 13px; margin-bottom: 20px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .card .label { font-size: 12px; color: #8f959e; }
+  .card .num { font-size: 26px; font-weight: 600; margin-top: 6px; }
+  .card .extra { font-size: 12px; color: #8f959e; margin-top: 4px; }
+  .warn { color: #d4380d; }
+  .good { color: #389e0d; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+  @media (max-width: 900px) { .grid2 { grid-template-columns: 1fr; } }
+  .panel { background: #fff; border-radius: 10px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .panel h2 { font-size: 15px; margin-bottom: 12px; }
+  .bars { display: flex; align-items: flex-end; gap: 4px; height: 120px; }
+  .bar { flex: 1; background: #3370ff; border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
+  .bar:hover::after { content: attr(data-tip); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); background: #1f2329; color: #fff; font-size: 11px; padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
+  .bar-labels { display: flex; gap: 4px; margin-top: 4px; }
+  .bar-labels span { flex: 1; font-size: 10px; color: #8f959e; text-align: center; overflow: hidden; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #f0f0f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  th { color: #8f959e; font-weight: 500; position: sticky; top: 0; background: #fff; }
+  .tbl-wrap { overflow: auto; max-height: 420px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .tab { padding: 6px 14px; border-radius: 16px; border: 1px solid #dee0e3; background: #fff; cursor: pointer; font-size: 13px; }
+  .tab.active { background: #3370ff; color: #fff; border-color: #3370ff; }
+  input.search { padding: 8px 12px; border: 1px solid #dee0e3; border-radius: 8px; width: 280px; font-size: 13px; margin-bottom: 12px; }
+  .err { background: #fff1f0; color: #d4380d; padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 13px; }
+  .dist span { display: inline-block; margin: 3px 8px 3px 0; padding: 3px 10px; background: #f0f5ff; border-radius: 12px; font-size: 12px; }
+  .refresh { float: right; font-size: 12px; color: #3370ff; cursor: pointer; }
+</style>
+</head>
+<body>
+<h1>TTC 云端数据库管理面板</h1>
+<div class="sub">阿里云 RDS · ttc_talent · 只读视图 · <span id="ts"></span> <span class="refresh" onclick="loadAll()">刷新</span></div>
+<div id="errbox"></div>
+<div class="cards" id="cards"></div>
+<div class="grid2">
+  <div class="panel"><h2>每日候选人入库（近 14 天）</h2><div class="bars" id="barsCand"></div><div class="bar-labels" id="barsCandL"></div></div>
+  <div class="panel"><h2>分布</h2><div class="dist" id="dist"></div></div>
+</div>
+<div class="panel" style="margin-bottom:24px">
+  <h2>最近候选人（云端）</h2>
+  <input class="search" id="q" placeholder="搜索姓名 / 公司 / 简历正文，回车查询" onkeydown="if(event.key==='Enter')loadRecent()">
+  <div class="tbl-wrap"><table id="recentTbl"></table></div>
+</div>
+<div class="panel">
+  <h2>表浏览器</h2>
+  <div class="tabs" id="tabs"></div>
+  <div class="tbl-wrap"><table id="tableTbl"></table></div>
+</div>
+<script>
+const fmt = n => n == null ? '-' : Number(n).toLocaleString();
+function showErr(msg){ document.getElementById('errbox').innerHTML = `<div class="err">云端查询失败：${msg}</div>`; }
+async function j(u){ const r = await fetch(u); return r.json(); }
+
+async function loadOverview(){
+  const d = await j('/api/db/overview');
+  if(!d.ok) return showErr(d.error);
+  const c = d.candidates, m = d.memories;
+  const phonePct = c.total ? Math.round(100*c.with_phone/c.total) : 0;
+  document.getElementById('cards').innerHTML = `
+    <div class="card"><div class="label">云端候选人</div><div class="num">${fmt(c.total)}</div>
+      <div class="extra">最近写入 ${String(c.last_updated||'-').slice(0,16)}</div></div>
+    <div class="card"><div class="label">手机号覆盖率</div><div class="num ${phonePct<60?'warn':'good'}">${phonePct}%</div>
+      <div class="extra">${fmt(c.with_phone)} / ${fmt(c.total)}（目标 ≥60% 四要素）</div></div>
+    <div class="card"><div class="label">垃圾姓名（全文/空）</div><div class="num ${c.junk_name>0?'warn':'good'}">${fmt(c.junk_name)}</div>
+      <div class="extra">需清洗或重新解析</div></div>
+    <div class="card"><div class="label">对话记忆</div><div class="num">${fmt(m.total)}</div>
+      <div class="extra">向量化 ${fmt(m.with_embedding)} 条</div></div>
+    <div class="card"><div class="label">简历附件</div><div class="num">${fmt(d.tables.candidate_resume_files)}</div>
+      <div class="extra">candidate_resume_files</div></div>
+    <div class="card"><div class="label">插件事件</div><div class="num">${fmt(d.tables.plugin_activity_events)}</div>
+      <div class="extra">会话 ${fmt(d.tables.plugin_sessions)} · 用户 ${fmt(d.tables.plugin_users)}</div></div>`;
+  document.getElementById('dist').innerHTML =
+    '<div style="font-size:13px;color:#8f959e;margin-bottom:6px">候选人平台</div>' +
+    d.platform_dist.map(p=>`<span>${p.platform||'(空)'} · ${fmt(p.n)}</span>`).join('') +
+    '<div style="font-size:13px;color:#8f959e;margin:10px 0 6px">记忆来源</div>' +
+    d.memory_source_dist.map(p=>`<span>${p.source} · ${fmt(p.n)}</span>`).join('');
+}
+
+async function loadDaily(){
+  const d = await j('/api/db/ingestion-daily?days=14');
+  if(!d.ok) return showErr(d.error);
+  const rows = d.candidates, max = Math.max(1, ...rows.map(r=>r.n));
+  document.getElementById('barsCand').innerHTML = rows.map(r=>
+    `<div class="bar" style="height:${Math.round(100*r.n/max)}%" data-tip="${r.d}: ${r.n} 条"></div>`).join('') || '<span style="color:#8f959e;font-size:12px">近 14 天无入库</span>';
+  document.getElementById('barsCandL').innerHTML = rows.map(r=>`<span>${r.d.slice(5)}</span>`).join('');
+}
+
+async function loadRecent(){
+  const q = document.getElementById('q').value.trim();
+  const d = await j('/api/db/candidates/recent?limit=50' + (q ? '&q='+encodeURIComponent(q) : ''));
+  if(!d.ok) return showErr(d.error);
+  const cols = ['id','name','platform','current_company','current_role','phone','review_status','updated_at'];
+  const heads = ['ID','姓名','平台','公司','职位','手机号','状态','更新时间'];
+  document.getElementById('recentTbl').innerHTML =
+    '<tr>'+heads.map(h=>`<th>${h}</th>`).join('')+'</tr>' +
+    d.rows.map(r=>'<tr>'+cols.map(c=>`<td>${r[c]??''}</td>`).join('')+'</tr>').join('');
+}
+
+let curTable = 'cloud_candidates';
+async function loadTable(t){
+  curTable = t;
+  document.querySelectorAll('.tab').forEach(e=>e.classList.toggle('active', e.textContent===t));
+  const d = await j('/api/db/table/'+t+'?limit=50');
+  if(!d.ok) return showErr(d.error);
+  document.getElementById('tableTbl').innerHTML =
+    '<tr>'+d.columns.map(c=>`<th>${c}</th>`).join('')+'</tr>' +
+    d.rows.map(r=>'<tr>'+d.columns.map(c=>`<td>${r[c]??''}</td>`).join('')+'</tr>').join('');
+}
+
+function loadAll(){
+  document.getElementById('errbox').innerHTML='';
+  document.getElementById('ts').textContent = new Date().toLocaleString('zh-CN');
+  loadOverview(); loadDaily(); loadRecent(); loadTable(curTable);
+}
+document.getElementById('tabs').innerHTML =
+  ['cloud_candidates','memories','candidate_resume_files','plugin_activity_events','plugin_sessions','plugin_users']
+  .map(t=>`<div class="tab${t===curTable?' active':''}" onclick="loadTable('${t}')">${t}</div>`).join('');
+loadAll();
+</script>
+</body>
+</html>

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>人工复核 - TTC 候选人数据收藏器</title>
+  <link rel="stylesheet" href="review.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>人工复核</h1>
+      <div class="sub">查看原始附件、OCR 文本与结构化字段，修正后写入飞书人才库。</div>
+    </div>
+    <a href="/" class="badge">返回仪表盘</a>
+  </header>
+
+  <div class="toolbar">
+    <div class="tabs">
+      <button id="tab-v2" class="active" onclick="setMode('v2')">v2 入库流水</button>
+      <button id="tab-v1" onclick="setMode('v1')">v1 本地候选</button>
+    </div>
+    <div class="queue-info">
+      队列 <b id="queue-count">0</b> 条
+      <span id="current-index">未选择</span>
+    </div>
+  </div>
+
+  <div class="review-layout">
+    <aside class="queue-panel">
+      <div class="panel-head">待复核列表</div>
+      <div id="queue-list" class="queue-list"></div>
+    </aside>
+
+    <section class="main-panels">
+      <div class="panel attachment-panel">
+        <div class="panel-head">原始附件</div>
+        <div id="attachment-preview" class="attachment-preview">
+          <div class="empty">选择左侧记录查看附件</div>
+        </div>
+      </div>
+
+      <div class="panel text-panel">
+        <div class="panel-head">OCR / 原始文本</div>
+        <pre id="raw-text" class="raw-text">选择左侧记录查看文本</pre>
+      </div>
+
+      <div class="panel form-panel">
+        <div class="panel-head">结构化字段 <span id="confidence-summary" class="confidence-summary"></span></div>
+        <form id="review-form" onsubmit="return false;">
+          <label>姓名</label>
+          <div class="field-row"><input id="name" type="text"><span class="conf-badge" data-field="name"></span></div>
+
+          <label>电话</label>
+          <div class="field-row"><input id="phone" type="text"><span class="conf-badge" data-field="phone"></span></div>
+
+          <label>邮箱</label>
+          <div class="field-row"><input id="email" type="text"><span class="conf-badge" data-field="email"></span></div>
+
+          <label>当前公司</label>
+          <div class="field-row"><input id="current_company" type="text"><span class="conf-badge" data-field="current_company"></span></div>
+
+          <label>当前职位</label>
+          <div class="field-row"><input id="current_title" type="text"><span class="conf-badge" data-field="current_title"></span></div>
+
+          <label>学校</label>
+          <div class="field-row"><input id="school" type="text"><span class="conf-badge" data-field="school"></span></div>
+
+          <label>教育经历</label>
+          <div id="education" class="education-group">
+            <input id="education_school" type="text" placeholder="学校">
+            <input id="education_degree" type="text" placeholder="学历">
+            <input id="education_major" type="text" placeholder="专业">
+            <input id="education_graduation_year" type="number" placeholder="毕业年份">
+          </div>
+
+          <label>期望薪资</label>
+          <div class="field-row"><input id="expected_salary" type="text"><span class="conf-badge" data-field="expected_salary"></span></div>
+
+          <label>工作经历</label>
+          <div id="work-experiences"></div>
+          <button type="button" class="secondary" onclick="addExperience()">+ 添加经历</button>
+        </form>
+
+        <div class="actions">
+          <button onclick="approve()">通过并写入飞书</button>
+          <button class="secondary" onclick="skip()">跳过</button>
+          <button class="danger" onclick="reject()">驳回</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <dialog id="reject-dialog">
+    <div class="modal-head"><b>驳回原因</b><button class="secondary" onclick="closeReject()">取消</button></div>
+    <div class="modal-body">
+      <textarea id="reject-reason" placeholder="可选：填写驳回原因"></textarea>
+      <div class="row"><button class="danger" onclick="confirmReject()">确认驳回</button></div>
+    </div>
+  </dialog>
+
+  <div id="toast" class="toast"></div>
+</div>
+<script src="review.js"></script>
+</body>
+</html>

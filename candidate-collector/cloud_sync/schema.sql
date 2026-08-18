@@ -1,0 +1,4 @@
+-- ⚠️ 本文件已作废（2026-08-05，R1：结构变更只走 migrations）。
+-- 唯一真相源：cloud_sync/migrations/NNN_*.sql + schema_migrations 版本表。
+-- 执行：python -m cloud_sync.migrate status|apply|verify
+-- 历史基线见 migrations/001_init.sql（与本文件原内容一致）。

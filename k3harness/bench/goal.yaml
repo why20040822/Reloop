@@ -1,0 +1,48 @@
+# K3 harness 自改进目标配置（autoresearch Goal→Config 范式）
+# 原则：You don't need AGI. You need a goal, a metric, and a loop that never quits.
+
+goal: 在保证任务成功率不劣化的前提下，持续降低 k3h harness 的单任务 token 消耗
+
+scope:
+  # 允许实验修改的文件（harness 本体）
+  mutable:
+    - k3h/agent.py
+    - k3h/session.py
+    - k3h/truncate.py
+    - k3h/config.py
+    - k3h/tools/*.py
+    - k3h/prompts/system_zh.md
+    - k3h/backends/*.py
+  # Guard 文件：永不被实验修改（验收标准是度量本身，改了就作弊）
+  guarded:
+    - bench/accept/*
+    - bench/tasks.yaml
+    - bench/fixtures/*
+
+metric:
+  name: quick_bench_billable
+  definition: 快速子集（T1,T3,T5,T8）k3h 腿各 1 次的 billable tokens 中位数之和
+  direction: lower_is_better
+  baseline: null        # iteration #0 跑出来后回填
+
+guard:
+  # Guard 回答"有没有别的地方坏了"，与 metric 分离
+  - name: full_pass_rate
+    command: 全任务集 k3h 腿 1 次
+    threshold: 通过数 >= 9/10（T6 已知阈值偏严，豁免）
+  - name: guard_files_immutable
+    definition: experiment commit 不得触碰 scope.guarded 任何文件
+
+verify:
+  quick: .venv/bin/python bench/iterate.py verify-quick
+  full: .venv/bin/python bench/iterate.py verify-full
+
+loop:
+  max_iterations: 10        # 有界默认；unlimited 需显式声明
+  rules:
+    - 每轮只改一处（atomic change，坏了能定位）
+    - 先 commit 再 verify（最后成功状态永远在 git）
+    - 改进 → keep；变差/变坏 → git revert
+    - 语法错误立即修不计迭代；运行时错误最多试 3 次
+    - 同等结果取更简单方案
+  checkpoint_every: 3       # floor(max_iterations/3)

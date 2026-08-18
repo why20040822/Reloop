@@ -1,0 +1,152 @@
+{
+  "manifest_version": 3,
+  "name": "ot小插件",
+  "version": "4.8.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqVn6j3VLpiBKapg7/pZoCxf0Bz2N/94a9qsZUZKU5B51avu/T13xTl86+zk4bf+FhxNssX1ZzXOsSKBxi9SusZbTD/t3PJA6DPZ5+SUcVLwL8hYncU47+gIANas4Trlc5xXYOnVLlNqNrPvx1CzkIY8NeitFvWQd9RBzHtUgY9KsBRRnQFzQMSfO8YTcp5OAPpSYoTFyG+9mmxFrj1DiQc9las4obz4W9303f1yI/LWTychY/Pf+o0ASZJzuFWdFPJc8sfQ6plhoSHuEUTXSk86iuliYOEVgRCZQpleUGOMXtE8qz3Jl6q7kOJgW3jVHLAgfr5WbqDa6K7nMWo31/QIDAQAB",
+  "description": "ot小插件：将已授权候选人页面解析并写入云端人才库。",
+  "icons": {
+    "16": "icon16.plasmo.6c567d50.png",
+    "32": "icon32.plasmo.76b92899.png",
+    "48": "icon48.plasmo.aced7582.png",
+    "64": "icon64.plasmo.8bb5e6e0.png",
+    "128": "icon128.plasmo.3c1ed2d2.png"
+  },
+  "action": {
+    "default_title": "ot小插件",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icon16.plasmo.6c567d50.png",
+      "32": "icon32.plasmo.76b92899.png",
+      "48": "icon48.plasmo.aced7582.png",
+      "64": "icon64.plasmo.8bb5e6e0.png",
+      "128": "icon128.plasmo.3c1ed2d2.png"
+    }
+  },
+  "background": {
+    "service_worker": "background-entry.js",
+    "type": "module"
+  },
+  "options_ui": {
+    "page": "ot-options.html",
+    "open_in_tab": true
+  },
+  "side_panel": {
+    "default_path": "ot-sidepanel.html"
+  },
+  "permissions": [
+    "activeTab",
+    "downloads",
+    "scripting",
+    "sidePanel",
+    "storage",
+    "tabs",
+    "webNavigation",
+    "webRequest"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://zhipin.com/*",
+        "https://*.zhipin.com/*"
+      ],
+      "js": ["content/runtime_recovery.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://zhipin.com/*",
+        "https://*.zhipin.com/*"
+      ],
+      "js": ["content/boss_recommend_autopilot.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://zhipin.com/*",
+        "https://*.zhipin.com/*",
+        "https://maimai.cn/*",
+        "https://*.maimai.cn/*",
+        "https://www.linkedin.com/*",
+        "https://*.linkedin.com/*",
+        "https://www.liepin.com/*",
+        "https://*.liepin.com/*",
+        "https://h.dhunting.com/*",
+        "https://app.ttcadvisory.com/*",
+        "https://int.ttcadvisory.com/*"
+      ],
+      "js": ["copilot.aae3e1ab.js"],
+      "exclude_matches": [
+        "https://crm.ttcadvisory.com/*",
+        "https://gllue.udesk.cn/*"
+      ],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://zhipin.com/*",
+        "https://*.zhipin.com/*",
+        "https://maimai.cn/*",
+        "https://*.maimai.cn/*",
+        "https://www.liepin.com/*",
+        "https://*.liepin.com/*",
+        "https://h.dhunting.com/*",
+        "https://app.ttcadvisory.com/*",
+        "https://int.ttcadvisory.com/*"
+      ],
+      "js": ["copilot-inpage.95769368.js"],
+      "exclude_matches": [
+        "https://crm.ttcadvisory.com/*",
+        "https://gllue.udesk.cn/*"
+      ],
+      "css": ["copilot-inpage.d67e3dfd.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://*.zhipin.com/*",
+        "https://*.liepin.com/*",
+        "https://maimai.cn/*",
+        "https://*.maimai.cn/*",
+        "https://*.linkedin.com/*",
+        "https://h.dhunting.com/*",
+        "https://app.ttcadvisory.com/*"
+      ],
+      "js": ["content/auto_import.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    },
+    {
+      "matches": [
+        "https://app.ttcadvisory.com/app/plugInIframe*",
+        "https://app.ttcadvisory.com/app/plugInOptions*"
+      ],
+      "js": ["content/ot_iframe_branding.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/inject/injector_bridge.js",
+        "src/inject/injector.js",
+        "src/inject/copilot.bundle.js",
+        "sider_bridge.js",
+        "parsers/*.js"
+      ],
+      "matches": ["https://*/*", "http://*/*"]
+    },
+    {
+      "resources": [
+        "icon.c766bb78.png",
+        "copilot-inpage.d67e3dfd.css"
+      ],
+      "matches": ["https://*/*", "http://*/*"]
+    }
+  ]
+}

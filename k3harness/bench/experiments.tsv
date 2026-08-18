@@ -1,0 +1,7 @@
+iteration	commit	metric	delta	status	description
+0	c203e80	27808	0	baseline	iteration #0 基线
+1	5697288	21118	-6690	keep	bash截断 head/tail 4000→2500
+2	40b3bdb	19074	-8734	revert-guard	grep上限100→50, list_dir 200→100
+3	2e6c0fb	22959	+1841	revert-worse	grep上限100→50, list_dir 200→100（重跑）
+4	d7f03ec	24266	+3148	revert-worse	read_file 默认 limit 400→250
+5	d869558	25097	+3979	revert-worse	system prompt 精简 470→380 tokens
