@@ -103,8 +103,11 @@ class StructuringService:
             profile = TalentProfile(owner_user_id=owner_user_id, source_id=sid, **fields)
             db.add(profile)
 
-        db.commit()
-        db.refresh(profile)
+        if commit:
+            db.commit()
+            db.refresh(profile)
+        else:
+            db.flush()  # 批量: 同会话内可见并拿到自增 id, 提交交给外层
         logger.info("[structure] saved talent id=%s owner=%s", profile.id, owner_user_id)
         return profile
 
