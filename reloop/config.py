@@ -65,7 +65,9 @@ class Settings(BaseSettings):
     score_w_value: float = 0.15
     score_w_relation: float = 0.1
     score_w_tendency: float = 0.05
-    score_noise_threshold: float = 0.2
+    # 噪声阈值: 综合分低于此值视为噪声剔除。match 改用 max(0,cos) 后分数体系更贴近真实
+    # (不再虚高), 阈值相应下调到 0.1; 过高会误杀正常候选人, 过低则放进 match≈0 的真不匹配者。
+    score_noise_threshold: float = 0.1
     recommend_top_n: int = 10
     activity_decay: float = 0.1
 
