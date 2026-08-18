@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     app_log_level: str = "INFO"
+    # 允许跨域的前端来源, 逗号分隔; "*" = 全部放通(开发期默认)。
+    # 生产收紧示例: BRAINX_CORS_ALLOW_ORIGINS=https://your-frontend.example.com
+    cors_allow_origins: str = "*"
 
     # ---------- RDS MySQL (唯一数据库) ----------
     mysql_host: str = "127.0.0.1"
@@ -67,6 +70,14 @@ class Settings(BaseSettings):
     activity_decay: float = 0.1
 
     # ---------- 派生 ----------
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """把逗号分隔的来源解析成列表; "*" 单独返回 ["*"]。"""
+        raw = (self.cors_allow_origins or "").strip()
+        if raw in ("", "*"):
+            return ["*"]
+        return [o.strip() for o in raw.split(",") if o.strip()]
+
     @property
     def sync_dsn(self) -> str:
         """实际使用的数据库 DSN (database_url 优先, 便于测试切 SQLite)。"""
