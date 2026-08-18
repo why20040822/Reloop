@@ -30,6 +30,9 @@ export const STRINGS = {
     empty_reco: "该岗位暂无入围候选人，换个岗位或补充 JD。",
     loading: "加载中",
     back: "返回",
+    aria_switch_pos: "岗位切换",
+    why_high: "拉高排名", why_low: "是短板",
+    gaps_list: "· CORS 未开：真实模式需后端 allow_origins 放通预览域名<br>· GET /talents 无分页/筛选<br>· 无「按人查互动」的 GET 接口<br>· 无重算 embedding / 仪表盘聚合接口<br>· feedback 不回包更新后的条目",
   },
   "en-US": {
     appTitle: "Reloop Cockpit",
@@ -61,5 +64,8 @@ export const STRINGS = {
     empty_reco: "No shortlisted candidates for this role. Switch role or add a JD.",
     loading: "Loading",
     back: "Back",
+    aria_switch_pos: "Switch role",
+    why_high: "lifts the rank", why_low: "is the weak spot",
+    gaps_list: "· CORS not enabled: live mode needs backend allow_origins for the preview domain<br>· GET /talents has no pagination/filter<br>· no per-talent interactions GET endpoint<br>· no re-embed / dashboard aggregate endpoint<br>· feedback does not return the updated item",
   },
 };
