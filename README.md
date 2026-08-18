@@ -9,6 +9,70 @@
 
 ---
 
+## 0. 二次开发更新说明（架构 / 运转 / 验证）
+
+> 本节记录在原项目基础上的二次开发：修复了主链路的关键 bug、优化了评分质量、
+> 补齐了工程能力，并新增了一个配套前端。核心算法与数据链路已通过 18/18 断言验证。
+
+### 0.1 整体架构（前后端分离，三段式）
+
+```
+[ webapp/ 静态SPA前端 ] --HTTP(X-Owner-User-Id)--> [ reloop/ FastAPI后端 ] --SQL--> [ RDS MySQL ]
+   Eazo预览/本地承载                                   你的服务器承载                你的阿里云
+        │                                                  │
+   server.js(Node零依赖)                            uvicorn(Python)
+   package.json dev/start                    外部依赖: TTC网关 + LLM(可选)
+```
+
+- **前端 `webapp/`**：零框架静态 SPA，`npm run dev`(=`node server.js`) 拉起，伺服 `webapp/`。
+  数据层 `data/provider.js` 可切换：`apiBase` 空=内置样本，填后端地址=真实 API。**切换不改业务代码。**
+- **后端 `reloop/`**：分层 FastAPI —— `main`(入口/CORS/路由) → `api`(端点) → `modules`(业务) → `db`(数据)。
+- **数据库**：RDS MySQL；测试可用 `BRAINX_DATABASE_URL=sqlite:///...` 覆盖。
+
+### 0.2 核心数据链路（8 环）
+
+```
+① TTC取数(sync/client) → ② 归一化(sync/normalizer) → ③ 画像结构化(profile/structuring: 补价值分/向量/倾向)
+ → ④ 落库 talent_profiles(按 owner 隔离) → ⑤ 用户设岗(positions) → ⑥ 粗筛+五因子精算(recommend/engine + scoring)
+ → ⑦ 落库 recommendations → ⑧ 用户反馈 confirm/reject/correct(反哺评分)
+```
+
+评分内核（`modules/scoring/`，加权乘法模型）：
+`触达优先级 = 活跃度^0.3 × 岗位匹配^0.4 × 人才价值^0.15 × 历史关系^0.1 × 求职可能^0.05`
+任一关键因子趋 0 会显著压低总分 → 自然抑制"活跃但不匹配"的噪声候选人。
+
+### 0.3 本次修复清单（按优先级，均已验证）
+
+- **P0 数据闭环**：① `get_db` 改请求成功自动 commit（修同步数据静默丢失）；
+  ② 同步链路接回 `structuring`（修价值分/向量/倾向全空导致分恒 0.5）；③ flush 时序（修同会话读不到新写入）。
+- **P1 评分质量**：④ 粗筛改分词 OR 命中（修异名相关漏召回）；⑤ min-max 区分"全 0/全相等非 0"（修冷启动白送分）；
+  ⑥ `match_score` 改 `max(0,cos)`（修离线向量匹配度失真，配套噪声阈值 0.2→0.1）；⑦ 时区统一 UTC（修 8 小时误差）。
+- **P2 工程**：⑧ `GET /talents` 加分页 `limit/offset`；⑨ `chat_json` 括号计数稳健提取 JSON；
+  ⑩ 新增 `auth_auto_register` 生产鉴权开关；⑪ 补 `package.json`+`server.js` 预览入口；⑫ 补 CORS 中间件。
+
+### 0.4 三个接线点（配置驱动，非改代码）
+
+| 接线点 | 位置 | 配置 |
+|---|---|---|
+| ① 前端→后端 | 前端「设置」页 | `apiBase` + `ownerId` |
+| ② 后端跨域/鉴权 | 后端 `.env` | `BRAINX_CORS_ALLOW_ORIGINS` / `BRAINX_AUTH_AUTO_REGISTER` |
+| ③ 后端→数据库 | 后端 `.env` | `BRAINX_MYSQL_HOST` + RDS 白名单（`python check_db.py` 自检） |
+
+### 0.5 启动与验证
+
+```bash
+# 后端(你的服务器)
+uvicorn reloop.main:app --host 0.0.0.0 --port 8000     # Swagger: /docs
+# 前端(预览/本地)
+npm run dev                                            # = node server.js
+# 完整验证(SQLite, 不碰 RDS)
+python tests/test_sync_pipeline.py    # 真实 HTTP 同步路径闭环
+python tests/test_pipeline.py         # 原全流程
+python check_db.py                    # RDS 连通性自检(本地填真实外网地址后)
+```
+
+---
+
 ## 1. 运行环境
 
 - Python 3.11（**conda 环境，不装进系统 Python**）
