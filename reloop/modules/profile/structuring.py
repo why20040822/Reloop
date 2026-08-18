@@ -30,8 +30,14 @@ class StructuringService:
         owner_user_id: str,
         talent: dict,
         source_id: Optional[str] = None,
+        commit: bool = True,
     ) -> TalentProfile:
-        """talent: normalizer 输出的标准结构化 dict。"""
+        """talent: normalizer 输出的标准结构化 dict。
+
+        commit=True: 单条落库场景, 立即提交并 refresh(拿到自增 id)。
+        commit=False: 批量同步场景, 只 flush(同会话内可见、拿到 id),
+                      由外层统一 commit, 避免逐条提交的性能损耗与事务边界混乱。
+        """
         text = talent.get("summary") or ""
 
         # ---- 1. LLM 增强(可选): 抽取 company_tier / tendency / 补充技能 ----
