@@ -140,40 +140,5 @@ class TalentSyncService:
             if own_session:
                 db.close()
 
-    @staticmethod
-    def _upsert(db, owner_user_id: str, t: dict) -> Optional[TalentProfile]:
-        """同 owner 下 source_id 去重 upsert (source_id 为空则按姓名+公司)。"""
-        q = db.query(TalentProfile).filter(
-            TalentProfile.owner_user_id == owner_user_id
-        )
-        if t.get("source_id"):
-            existing = q.filter(TalentProfile.source_id == t["source_id"]).first()
-        else:
-            existing = q.filter(
-                TalentProfile.name == t["name"],
-                TalentProfile.company == (t.get("company") or ""),
-            ).first()
-
-        fields = dict(
-            name=t["name"],
-            base_location=t.get("base_location"),
-            company=t.get("company"),
-            position=t.get("position"),
-            work_years=t.get("work_years"),
-            education=t.get("education"),
-            skills=t.get("skills"),
-            resume_text=t.get("summary"),
-            last_active_at=t.get("last_active_at"),
-            tags=t.get("tags") or [],
-            source_payload=t.get("raw"),
-        )
-        if existing:
-            for k, v in fields.items():
-                setattr(existing, k, v)
-            return existing
-        profile = TalentProfile(owner_user_id=owner_user_id, source_id=t.get("source_id") or None, **fields)
-        db.add(profile)
-        return profile
-
 
 talent_sync_service = TalentSyncService()
