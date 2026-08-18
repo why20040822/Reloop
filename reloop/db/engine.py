@@ -33,10 +33,19 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False
 
 
 def get_db() -> Generator[Session, None, None]:
-    """FastAPI 依赖: 提供一个数据库会话并在请求结束后关闭。"""
+    """FastAPI 依赖: 每个请求一个会话。
+
+    生产落库方式: 请求正常结束自动 commit; 抛异常则 rollback;
+    最后关闭会话。这样业务代码无需在每个写接口里手动 commit,
+    也避免"接口返回成功但写入被静默回滚"的数据丢失问题。
+    """
     db = SessionLocal()
     try:
         yield db
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
