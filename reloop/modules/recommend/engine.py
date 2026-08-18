@@ -82,20 +82,59 @@ class RecommendEngine:
 
     def _shortlist(self, db: Session, owner: str,
                    pos: Position) -> list[TalentProfile]:
-        """粗筛: 标签命中 / 职位名命中 / 画像文本含岗位关键词。"""
-        kw = pos.position_name
+        """粗筛: 岗位名/JD 分词后 OR 命中 tags/职位/技能/画像文本, 任一命中即入围。
+
+        改进(修复整串子串匹配漏召回): 岗位"商业分析师"时, 职位为"数据产品经理"
+        "HR专员"等不同名的相关人才, 只要命中任一关键词(如"分析""数据")即可入围,
+        不再因整串不匹配被丢弃。召回更全, 最终排序仍由五因子精算约束。
+        """
         talents = (
             db.query(TalentProfile)
             .filter(TalentProfile.owner_user_id == owner)
             .all()
         )
+        keywords = self._extract_keywords(pos)
+        if not keywords:
+            return talents  # 无有效关键词: 全量进精算, 靠五因子排序, 不误杀
+
         out = []
         for t in talents:
+            haystack = " ".join(
+                str(x) for x in [
+                    t.position or "",
+                    t.resume_text or "",
+                    " ".join(t.tags or []),
+                    " ".join(t.skills or []),
+                ]
+            )
             tags = t.tags or []
-            if (kw in tags) or (t.position and kw in t.position) or (
-                t.resume_text and kw in t.resume_text
-            ):
+            if any(kw in tags for kw in keywords) or any(kw in haystack for kw in keywords):
                 out.append(t)
+        # 兜底: 若一个都没召回, 退回全量进精算, 避免空名单
+        return out or talents
+
+    @staticmethod
+    def _extract_keywords(pos: Position) -> list[str]:
+        """从岗位名 + JD 提取召回关键词(去重、过滤过短词)。
+
+        分词: 按空白/常见分隔符切分, 并保留岗位名整体。无第三方分词依赖。
+        """
+        import re
+
+        raw = f"{pos.position_name or ''} {pos.jd_text or ''}"
+        parts = re.split(r"[\s,，、/;；|]+", raw)
+        kws: list[str] = []
+        if pos.position_name:
+            kws.append(pos.position_name.strip())  # 岗位名整体也作为关键词
+        for p in parts:
+            p = p.strip()
+            if len(p) >= 2:  # 过滤单字噪声
+                kws.append(p)
+        seen, out = set(), []
+        for k in kws:
+            if k and k not in seen:
+                seen.add(k)
+                out.append(k)
         return out
 
     def _rank(self, db: Session, owner: str,
