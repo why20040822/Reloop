@@ -11,6 +11,7 @@ from typing import Optional
 from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy.orm import Session
 
+from reloop.config import settings
 from reloop.db.engine import get_db
 from reloop.db.models import User
 
@@ -29,6 +30,12 @@ def get_current_user(
         )
     user = db.query(User).filter(User.user_id == x_owner_user_id).first()
     if user is None:
+        if not settings.auth_auto_register:
+            # 生产: 未注册用户直接拒绝, 不再任填任进
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="用户未注册(auth_auto_register=False)",
+            )
         user = User(user_id=x_owner_user_id)
         db.add(user)
         db.commit()
