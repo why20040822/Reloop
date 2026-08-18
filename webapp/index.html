@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>Reloop 触达工作台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+  <!-- Eazo brand handoff (top + bottom banners; no-ops inside Eazo WebView/iframe) -->
+  <script defer src="https://cdn.eazo.ai/branding/eazo-brand-banner.js" data-eazo-app-id="ilXe3nSaLkbf3qE4"></script>
+</head>
+<body>
+  <main class="app-shell">
+    <section class="frame" id="view" aria-live="polite"></section>
+  </main>
+  <nav class="tabs" id="tabs" aria-label="导航"></nav>
+
+  <script type="module" src="./data/mock.js"></script>
+  <script type="module" src="./data/provider.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
