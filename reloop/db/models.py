@@ -34,7 +34,8 @@ from reloop.db.engine import Base
 
 
 def _now() -> dt.datetime:
-    return dt.datetime.utcnow()
+    # UTC(naive), 避免 datetime.utcnow() 的弃用告警; 与评分层的时间基准一致。
+    return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
 
 
 # 可移植自增主键: MySQL 用 BIGINT, SQLite 用 INTEGER(否则 SQLite 不自增)
