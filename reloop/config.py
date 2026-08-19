@@ -78,6 +78,8 @@ class Settings(BaseSettings):
     score_noise_threshold: float = 0.1
     recommend_top_n: int = 10
     activity_decay: float = 0.1
+    # 活跃度 v2: 绝对分(最近事件新近度)在混合归一化中的占比, 其余给批内相对分
+    activity_absolute_weight: float = 0.4
 
     # ---------- 派生 ----------
     @property

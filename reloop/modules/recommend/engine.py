@@ -11,7 +11,9 @@
 
 import datetime as dt
 import logging
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -26,6 +28,11 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_TOP_SIZES = (3, 10, None)  # None -> 取 .env 的 recommend_top_n
 
+# 进程内计算结果缓存: (owner, position_name) -> (timestamp, result)
+# 同岗位 5 分钟内直接返回, 避免每次切岗位都重跑 LLM(首屏/切回秒开)
+_COMPUTE_CACHE_TTL = 300.0
+_COMPUTE_CACHE: dict[tuple[str, str], tuple[float, dict]] = {}
+
 
 class RecommendEngine:
     """触达优先级实时计算引擎。"""
@@ -38,6 +45,13 @@ class RecommendEngine:
         top_sizes: tuple = DEFAULT_TOP_SIZES,
     ) -> dict:
         """为指定用户计算推荐(数据按 owner 隔离)。"""
+        # ---- 0. 结果缓存(同岗位 5 分钟内命中直接返回) ----
+        cache_key = (owner_user_id, position_name or "")
+        hit = _COMPUTE_CACHE.get(cache_key)
+        if hit is not None and (time.time() - hit[0]) < _COMPUTE_CACHE_TTL:
+            logger.info("[recommend] cache hit for %s", cache_key)
+            return hit[1]
+
         # ---- 1. 当前岗位 ----
         pos = self._resolve_position(db, owner_user_id, position_name)
         if pos is None:
@@ -67,6 +81,7 @@ class RecommendEngine:
         for size in top_sizes:
             key = "top_n" if size is None else f"top{size}"
             result[key] = items[: size or settings.recommend_top_n]
+        _COMPUTE_CACHE[cache_key] = (time.time(), result)
         return result
 
     # ---------------- 内部方法 ----------------
@@ -139,18 +154,25 @@ class RecommendEngine:
 
     def _rank(self, db: Session, owner: str,
               talents: list[TalentProfile], pos: Position):
-        """精算: 五因子批量归一化 -> 加权乘法排序。"""
+        """精算: 五因子批量归一化 -> 加权乘法排序。
+
+        v2: 活跃度走分事件半衰期+绝对/相对混合归一化;
+            匹配度走结构化多维(职位/技能/年限/学历)+语义余弦融合。
+        """
         now = dt.datetime.now()
         interactions_by_talent = self._load_interactions(db, owner, talents)
 
-        # 活跃度原始分(平台活跃时间 + 站内互动, 牛顿冷却)
-        act_raw = {}
+        # 活跃度 v2: 冷却原始分 + 最近事件新近度, 混合归一化
+        act_raw: dict[int, float] = {}
+        act_latest: dict[int, Optional[float]] = {}
         for t in talents:
             its = interactions_by_talent.get(t.id, [])
             events = factors.build_activity_events(t.last_active_at, its)
             act_raw[t.id] = factors.activity_score(events, now=now)
+            act_latest[t.id] = factors.days_since_latest_event(events, now=now)
         act_norm = dict(
-            zip(act_raw.keys(), factors.min_max_normalize(list(act_raw.values())))
+            zip(act_raw.keys(), factors.hybrid_activity_normalize(
+                list(act_raw.values()), list(act_latest.values())))
         )
 
         # 历史关系原始分
@@ -162,13 +184,37 @@ class RecommendEngine:
             zip(rel_raw.keys(), factors.min_max_normalize(list(rel_raw.values())))
         )
 
-        # JD 向量
+        # JD 向量(语义维度) + 召回关键词(结构化维度)
         jd_text = pos.jd_text or pos.position_name
         jd_emb = pos.jd_embedding or llm_service.embed(jd_text)
+        jd_kws = self._extract_keywords(pos)
+
+        # LLM 职位语义相似度: 去重后批量推理(带进程内缓存),
+        # 解决"AI研发工程师"匹配不到"算法工程师"的字面失灵问题
+        title_sim_map: dict[str, float] = {}
+        if pos.position_name:
+            uniq_positions = [p for p in {t.position for t in talents if t.position}]
+            title_sim_map = llm_service.title_similarity(
+                pos.position_name, uniq_positions)
 
         candidates = []
         for t in talents:
-            match = factors.match_score(jd_emb, t.resume_embedding or [])
+            match = factors.match_score_v2(
+                position_name=pos.position_name,
+                jd_text=pos.jd_text,
+                jd_keywords=jd_kws,
+                talent_position=t.position,
+                talent_skills=t.skills or [],
+                talent_tags=t.tags or [],
+                talent_work_years=t.work_years,
+                talent_education=t.education,
+                jd_embedding=jd_emb,
+                resume_embedding=t.resume_embedding or [],
+                title_semantic=(
+                    title_sim_map.get(t.position)
+                    if t.position in title_sim_map else None
+                ),
+            )
             value = t.value_score if t.value_score is not None else factors.normalize_value(
                 factors.raw_value_score()
             )
@@ -209,13 +255,22 @@ class RecommendEngine:
                      ranked, run_id: str) -> list[dict]:
         items = []
         today = dt.date.today()
-        for idx, r in enumerate(ranked, start=1):
-            t = db.get(TalentProfile, r.talent_id)
-            reason = llm_service.generate_contact_reason(
-                talent=f"{t.name}({t.position or ''})",
-                position=pos.position_name,
-                jd=pos.jd_text or "",
-            )
+        # 联系理由: 并发生成(线程池), 避免 TopN 逐个串行调 LLM 拖慢首屏
+        talents = [db.get(TalentProfile, r.talent_id) for r in ranked]
+        reasons: list[str] = ["" for _ in ranked]
+        with ThreadPoolExecutor(max_workers=min(8, len(ranked) or 1)) as ex:
+            futs = {
+                ex.submit(
+                    llm_service.generate_contact_reason,
+                    talent=f"{t.name}({t.position or ''})",
+                    position=pos.position_name,
+                    jd=pos.jd_text or "",
+                ): i
+                for i, t in enumerate(talents)
+            }
+            for fut, i in futs.items():
+                reasons[i] = fut.result()
+        for idx, (r, t, reason) in enumerate(zip(ranked, talents, reasons), start=1):
             rec = Recommendation(
                 owner_user_id=owner,
                 talent_id=r.talent_id,

@@ -203,5 +203,60 @@ class LLMService:
         except (TypeError, ValueError):
             return None, "LLM 返回格式异常"
 
+    # ---------------- 岗位语义相似度(职位匹配 v2) ----------------
+    def title_similarity(self, jd_position: str,
+                         talent_positions: list[str],
+                         batch_size: int = 40) -> dict[str, float]:
+        """目标岗位 vs 一批候选人职位的语义相似度(0~1), 供匹配度 title 维度用。
+
+        解决字面匹配失灵: "AI研发工程师" 与 "算法工程师" bigram 相似度≈0,
+        但语义上是同族岗位, 应得 0.7+ —— 由 LLM 批量推理。
+        - 去重后分批调用(每批 batch_size 个职位), 控制单次 prompt 长度
+        - 进程内缓存 (jd_position, talent_position) -> score, 岗位不变时零重复调用
+        - 无 key / 调用失败返回空 dict, 调用方降级到字面相似度
+        """
+        if not self._available or not jd_position:
+            return {}
+        uniq = sorted({p.strip() for p in talent_positions if p and p.strip()})
+        result: dict[str, float] = {}
+        todo: list[str] = []
+        for p in uniq:
+            cached = _TITLE_SIM_CACHE.get((jd_position, p))
+            if cached is not None:
+                result[p] = cached
+            else:
+                todo.append(p)
+        for i in range(0, len(todo), batch_size):
+            batch = todo[i:i + batch_size]
+            prompt = (
+                "你是招聘领域的岗位相似度评估专家。评估每个候选人当前职位与目标岗位的"
+                "语义相关程度(考虑职责、技能栈、行业惯例, 允许跨词面匹配)。\n"
+                f"目标岗位: {jd_position}\n"
+                "评分标准: 1.0=同一岗位; 0.7~0.9=同族岗位(如 算法工程师 对 AI研发工程师, "
+                "HRBP 对 组织发展专家); 0.4~0.6=部分相关(有技能交集或同大类职能); "
+                "0.1~0.3=弱相关; 0=完全不相关。\n"
+                "严格只输出一个 JSON 对象, key=候选人职位原文, value=0~1的小数(保留两位)。\n"
+                f"候选人职位列表: {json.dumps(batch, ensure_ascii=False)}"
+            )
+            data = self.chat_json(prompt)
+            if not isinstance(data, dict):
+                logger.warning("[llm] title_similarity batch invalid, len=%d", len(batch))
+                continue
+            for p in batch:
+                raw = data.get(p)
+                try:
+                    score = float(raw)
+                except (TypeError, ValueError):
+                    continue
+                score = max(0.0, min(1.0, score))
+                result[p] = score
+                _TITLE_SIM_CACHE[(jd_position, p)] = score
+        return result
+
+
+# 进程内岗位相似度缓存: {(jd_position, talent_position): score}
+# 岗位不变/人才库不变时, 二次推荐不再产生 LLM 调用
+_TITLE_SIM_CACHE: dict[tuple[str, str], float] = {}
+
 
 llm_service = LLMService()
