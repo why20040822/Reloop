@@ -135,9 +135,11 @@ class FeishuAuthService:
         if not app_token:
             return None
         try:
-            # v2 接口: code -> user_access_token
+            # v1 接口: code -> user_access_token
+            # (注: v2 路径 /authen/v2/oidc/access_token 对本应用返回 404 page
+            #  not found, 2026-08-20 实测; v1 返回 {code, message, data:{access_token}})
             resp = httpx.post(
-                f"{_FEISHU_OPEN_BASE}/open-apis/authen/v2/oidc/access_token",
+                f"{_FEISHU_OPEN_BASE}/open-apis/authen/v1/oidc/access_token",
                 headers={"Authorization": f"Bearer {app_token}"},
                 json={"grant_type": "authorization_code", "code": code},
                 timeout=10,
@@ -145,7 +147,8 @@ class FeishuAuthService:
             resp.raise_for_status()
             data = resp.json()
             if data.get("code") != 0:
-                logger.warning("[feishu] access_token error: %s", data.get("msg"))
+                logger.warning("[feishu] access_token error: %s %s",
+                               data.get("code"), data.get("message"))
                 return None
             user_access_token = (data.get("data") or {}).get("access_token")
             if not user_access_token:
@@ -159,7 +162,8 @@ class FeishuAuthService:
             resp.raise_for_status()
             data = resp.json()
             if data.get("code") != 0:
-                logger.warning("[feishu] user_info error: %s", data.get("msg"))
+                logger.warning("[feishu] user_info error: %s %s",
+                               data.get("code"), data.get("message"))
                 return None
             info = data.get("data") or {}
             if not info.get("open_id"):

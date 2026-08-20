@@ -404,7 +404,9 @@ async function handleAuthCallback() {
       <a class="btn blue" style="display:inline-block;text-align:center;text-decoration:none" href="#/">${t("login_back")}</a></div>`;
     setTimeout(() => { try { window.close(); } catch (e) { /* 非弹窗场景忽略 */ } }, 2000);
   } catch (e) {
-    view.innerHTML = `<div class="empty">${t("auth_cb_err")}<br><button class="btn" onclick="location.hash='#/'">${t("back")}</button></div>`;
+    // code 有但兑换失败(后端 401): 与"缺少授权码"区分开
+    const msg = code ? t("login_failed") : t("auth_cb_err");
+    view.innerHTML = `<div class="empty">${esc(msg)}<br><button class="btn" onclick="location.hash='#/'">${t("back")}</button></div>`;
   }
 }
 
