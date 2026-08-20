@@ -1,5 +1,5 @@
 // Reloop 触达工作台 — 路由 + 视图（Home / Talents / Talent detail / Positions / Settings）
-import { api, getCfg, setCfg, useMock } from "./data/provider.js";
+import { api, getCfg, setCfg, getAuth, setAuth, clearAuth, isAuthed, useMock } from "./data/provider.js";
 import { STRINGS } from "./i18n.js";
 
 const view = document.getElementById("view");
@@ -10,6 +10,9 @@ const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<
 
 // —— 当前选中岗位（跨视图共享）——
 let CURRENT_POSITION = null;
+
+// —— Home 渲染序号: 防止快速切换岗位时旧轮询把新列表覆盖 ——
+let homeSeq = 0;
 
 // —— 五因子键顺序（雷达 5 个顶点）——
 const FACTOR_KEYS = ["activity", "match", "value", "relationship", "tendency"];
@@ -60,16 +63,52 @@ const ring = (score) => {
 
 function loading() { view.innerHTML = `<div class="spinner">${t("loading")}…</div>`; }
 
-// ============ Home / 今日推荐 ============
+// ============ Home / 今日推荐(两阶段: 初筛秒出 + 精算轮询更新) ============
 async function renderHome() {
+  const seq = ++homeSeq;
   loading();
   const positions = await api.listPositions();
+  if (seq !== homeSeq) return;
   if (!CURRENT_POSITION) CURRENT_POSITION = positions[0]?.position_name || "商业分析师";
+
   const reco = await api.recommend(CURRENT_POSITION);
+  if (seq !== homeSeq) return;
+  renderHomeView(positions, reco);
+
+  // 初筛已出, 后台精算中 -> 轮询直到最终结果, 原地刷新列表
+  if (reco.computing || reco.phase === "preview") {
+    pollFinalResult(seq, CURRENT_POSITION);
+  }
+}
+
+function pollFinalResult(seq, positionName) {
+  const timer = setTimeout(async () => {
+    if (seq !== homeSeq || CURRENT_POSITION !== positionName) return;
+    try {
+      const r = await api.recommendResult(positionName);
+      if (seq !== homeSeq || CURRENT_POSITION !== positionName) return;
+      if (r.status === "done" && r.phase === "final") {
+        const positions = await api.listPositions();
+        if (seq !== homeSeq || CURRENT_POSITION !== positionName) return;
+        renderHomeView(positions, r);
+        return; // 最终结果已渲染, 停止轮询
+      }
+      if (r.status === "failed") return; // 精算失败: 保留初筛列表
+    } catch (e) { /* 网络抖动: 继续下一轮 */ }
+    pollFinalResult(seq, positionName);
+  }, 2500);
+  // 页面切走时终止: homeSeq 变化即失效
+}
+
+function renderHomeView(positions, reco) {
   const items = (reco.top_n || []).slice();
   const pending = items.filter((i) => (i.status || "pending") === "pending").length;
+  const computing = !!(reco.computing || reco.phase === "preview");
 
   const chips = positions.map((p) => `<button class="chip" data-pos="${esc(p.position_name)}" aria-pressed="${p.position_name === CURRENT_POSITION}">${esc(p.position_name)}</button>`).join("");
+  const banner = computing
+    ? `<div class="calc-banner"><span class="pulse"></span>${t("computing_banner")}</div>`
+    : (reco.cached ? `<div class="calc-banner done"><span class="dot"></span>${t("cached_banner")}</div>` : "");
   const rows = items.length ? items.map((it, idx) => rowHTML(it, idx === 0)).join("") : `<div class="empty">${t("empty_reco")}</div>`;
 
   view.innerHTML = `
@@ -77,20 +116,25 @@ async function renderHome() {
       <div><div class="kicker">${t("kicker")} / ${esc(CURRENT_POSITION)}</div><h1>${t("heroTitle")}</h1></div>
       <div class="run"><b>${new Date().toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" })}</b>${esc(reco.run_id || "")}</div>
     </header>
+    ${banner}
     <nav class="positions" aria-label="${t("aria_switch_pos")}">${chips}</nav>
     <div class="stats"><div class="stat"><span>${t("stat_pool")}</span><strong>${reco.total_pool ?? "—"}</strong></div><div class="stat"><span>${t("stat_short")}</span><strong>${reco.shortlisted ?? items.length}</strong></div><div class="stat"><span>${t("stat_pending")}</span><strong id="pendingCount">${pending}</strong></div></div>
     <div class="board">${rows}</div>`;
 
-  view.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => { CURRENT_POSITION = c.dataset.pos; renderHome(); }));
+  view.querySelectorAll(".chip").forEach((c) => c.addEventListener("click", () => {
+    if (CURRENT_POSITION === c.dataset.pos) return; // 点当前岗位: 不重复请求
+    CURRENT_POSITION = c.dataset.pos; renderHome();
+  }));
   wireRows();
 }
 
 function rowHTML(it, open) {
   const bd = it.score_breakdown || {};
+  const preview = it.contact_reason && it.contact_reason.startsWith("快速初筛");
   return `<details class="row" data-tid="${it.talent_id}" ${open ? "open" : ""}>
     <summary>
       <span class="rank">#${String(it.rank).padStart(2, "0")}</span>
-      <span class="person"><span class="name-line"><span class="name">${esc(it.name)}</span><span class="base">${esc(it.base_location || "")}</span></span><span class="meta">${esc(it.company || "")} · ${esc(it.position || "")}</span><span class="reason">${esc(it.contact_reason || "")}</span></span>
+      <span class="person"><span class="name-line"><span class="name">${esc(it.name)}</span><span class="base">${esc(it.base_location || "")}</span></span><span class="meta">${esc(it.company || "")} · ${esc(it.position || "")}</span><span class="reason">${esc(it.contact_reason || "")}${preview ? ` <span class="preview-tag">${t("preview_tag")}</span>` : ""}</span></span>
       ${ring(it.score || 0)}
     </summary>
     <div class="expanded">
@@ -195,8 +239,8 @@ async function renderPositions() {
     <header class="mast"><div><div class="kicker">${t("kicker")}</div><h1>${t("positions_title")}</h1></div></header>
     ${list}
     <div class="card"><div class="label">${t("set_position")}</div>
-      <div class="field"><input id="pname" placeholder="${t("pos_name")}"></div>
-      <div class="field"><textarea id="pjd" placeholder="${t("pos_jd")}"></textarea></div>
+      <div class="field"><span class="hint">${t("pos_name")}</span><input id="pname" placeholder="${t("pos_name_ph")}"></div>
+      <div class="field"><span class="hint">${t("pos_jd")}</span><textarea id="pjd" placeholder="${t("pos_jd_ph")}"></textarea></div>
       <button class="btn blue" id="psubmit">${t("pos_submit")}</button>
     </div>`;
   view.querySelector("#psubmit").addEventListener("click", async () => {
@@ -209,6 +253,11 @@ async function renderPositions() {
 // ============ Settings / 设置 ============
 async function renderSettings() {
   const cfg = getCfg();
+  const auth = getAuth();
+  let meInfo = null;
+  if (!useMock() && isAuthed()) {
+    try { meInfo = await api.me(); } catch (e) { clearAuth(); }
+  }
   view.innerHTML = `
     <header class="mast"><div><div class="kicker">${t("kicker")}</div><h1>${t("settings_title")}</h1></div>
       <div class="run"><b>${useMock() ? t("mode_mock") : t("mode_api")}</b></div></header>
@@ -217,11 +266,27 @@ async function renderSettings() {
       <div class="field"><span class="hint">${t("mode_label")}</span>
         <div class="seg"><button data-mode="live" class="${cfg.mode !== "mock" ? "on" : ""}">${t("ds_api")}</button><button data-mode="mock" class="${cfg.mode === "mock" ? "on" : ""}">${t("ds_mock")}</button></div></div>
       <div class="field"><span class="hint">${t("api_base")}</span><input id="apiBase" placeholder="${t("api_base_ph")}" value="${esc(cfg.apiBase)}"></div>
-      <div class="field"><span class="hint">${t("owner_id")}</span><input id="ownerId" value="${esc(cfg.ownerId)}"></div>
       <div class="field"><span class="hint">${t("language")}</span>
         <div class="seg"><button data-loc="zh-CN" class="${LOCALE === "zh-CN" ? "on" : ""}">中文</button><button data-loc="en-US" class="${LOCALE === "en-US" ? "on" : ""}">EN</button></div></div>
       <button class="btn" id="saveCfg">${t("save")}</button>
       <div class="status-line" id="savedLine"></div>
+    </div>
+    <div class="card soft"><div class="label">${t("account_title")}</div>
+      ${meInfo ? `
+        <div class="hint">${t("logged_as")}: <b>${esc(meInfo.display_name || meInfo.user_id)}</b> · ${t("pool_count")}: ${meInfo.pool_count}</div>
+        ${meInfo.ttc_bound
+          ? `<div class="hint">${t("ttc_bound_as")}: <b>${esc(meInfo.ttc_bound_name || "?")}</b>${meInfo.ttc_space_id ? ` · ${esc(meInfo.ttc_space_id)}` : ""}</div>`
+          : `<div class="hint">${t("ttc_unbound")}</div>`}
+        <div class="field"><span class="hint">${t("ttc_token")}</span><textarea id="ttcToken" placeholder="${t("ttc_token_ph")}"></textarea></div>
+        <div class="field"><span class="hint">${t("ttc_space")}</span><input id="ttcSpace" value="${esc(meInfo.ttc_space_id || "")}" placeholder="U2034..."></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn blue" id="ttcBind">${t("ttc_bind_btn")}</button>
+          <button class="btn" id="ttcSync">${t("ttc_sync_btn")}</button>
+          <button class="btn" id="logout">${t("logout")}</button>
+        </div>
+        <div class="status-line" id="ttcLine">${t("ttc_hint")}</div>`
+        : `<div class="hint">${t("not_logged_in")}</div>
+        <button class="btn blue" id="loginBtn">${t("login_feishu")}</button>`}
     </div>
     <div class="card soft"><div class="label">${t("gaps_title")}</div>
       <div class="hint">${t("gaps_list")}</div>
@@ -232,9 +297,80 @@ async function renderSettings() {
     if (b.dataset.mode) { setCfg({ mode: b.dataset.mode }); renderSettings(); }
   }));
   view.querySelector("#saveCfg").addEventListener("click", () => {
-    setCfg({ apiBase: view.querySelector("#apiBase").value.trim(), ownerId: view.querySelector("#ownerId").value.trim(), locale: LOCALE });
+    setCfg({ apiBase: view.querySelector("#apiBase").value.trim(), locale: LOCALE });
     view.querySelector("#savedLine").textContent = t("saved");
   });
+  const loginBtn = view.querySelector("#loginBtn");
+  if (loginBtn) loginBtn.addEventListener("click", openLoginModal);
+  const logoutBtn = view.querySelector("#logout");
+  if (logoutBtn) logoutBtn.addEventListener("click", () => { clearAuth(); renderSettings(); renderTabs(); });
+  const bindBtn = view.querySelector("#ttcBind");
+  if (bindBtn) bindBtn.addEventListener("click", async () => {
+    const token = view.querySelector("#ttcToken").value.trim();
+    const space = view.querySelector("#ttcSpace").value.trim();
+    const line = view.querySelector("#ttcLine");
+    if (!token) { line.textContent = t("ttc_need_token"); return; }
+    line.textContent = t("ttc_binding");
+    try {
+      const r = await api.bindTtc({ token, space_id: space || null });
+      line.textContent = t("ttc_bound_ok").replace("{name}", r.bound_name || "?") + (r.migrated_rows ? ` · ${t("ttc_migrated").replace("{n}", r.migrated_rows)}` : "");
+    } catch (e) { line.textContent = t("ttc_bind_fail"); }
+  });
+  const syncBtn = view.querySelector("#ttcSync");
+  if (syncBtn) syncBtn.addEventListener("click", async () => {
+    const line = view.querySelector("#ttcLine");
+    line.textContent = t("ttc_syncing");
+    try {
+      const r = await api.syncTtc();
+      line.textContent = t("ttc_synced").replace("{n}", r.synced ?? 0);
+    } catch (e) { line.textContent = t("ttc_sync_fail"); }
+  });
+}
+
+// ============ 飞书扫码登录 ============
+function openLoginModal() {
+  closeModal();
+  const cfg = getCfg();
+  const base = cfg.apiBase && cfg.apiBase.trim() ? cfg.apiBase.replace(/\/$/, "") : "";
+  const qrSrc = `${base}/auth/feishu/qrcode?redirect_uri=${encodeURIComponent(api.authRedirectUri())}`;
+  const overlay = document.createElement("div");
+  overlay.className = "overlay" ; overlay.id = "loginOverlay";
+  overlay.innerHTML = `
+    <div class="modal">
+      <div class="label">${t("login_feishu")}</div>
+      <div class="qrbox"><img id="loginQr" alt="${t("login_feishu")}"></div>
+      <div class="hint">${t("login_hint")}</div>
+      <div class="hint muted" style="font-size:11px">${t("login_redirect_note")}</div>
+      <div class="status-line" id="loginLine"></div>
+      <button class="btn" id="closeLogin">${t("close")}</button>
+    </div>`;
+  document.body.appendChild(overlay);
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
+  overlay.querySelector("#closeLogin").addEventListener("click", closeModal);
+  const img = overlay.querySelector("#loginQr");
+  img.onerror = () => { overlay.querySelector("#loginLine").textContent = t("login_qr_fail"); };
+  img.src = qrSrc;
+}
+
+function closeModal() {
+  document.getElementById("loginOverlay")?.remove();
+}
+
+// 飞书扫码回调: hash 形如 #/auth/callback?code=xxx&state=yyy
+async function handleAuthCallback() {
+  const hash = location.hash || "";
+  const q = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+  const code = new URLSearchParams(q).get("code");
+  view.innerHTML = `<div class="spinner">${code ? t("logging_in") : t("auth_cb_err")}…</div>`;
+  if (!code) { setTimeout(() => { location.hash = "#/"; }, 1500); return; }
+  try {
+    const r = await api.feishuLogin(code);
+    setAuth(r);
+    renderTabs();
+    location.hash = "#/";
+  } catch (e) {
+    view.innerHTML = `<div class="empty">${t("auth_cb_err")}<br><button class="btn" onclick="location.hash='#/'">${t("back")}</button></div>`;
+  }
 }
 
 // ============ Router + Tabs ============
@@ -247,14 +383,24 @@ const TABS = [
 function renderTabs() {
   const cur = location.hash || "#/";
   const base = "#/" + (cur.split("/")[1] || "");
-  tabsEl.innerHTML = TABS.map((tb) => `<button class="tab ${base === tb.hash ? "active" : ""}" data-hash="${tb.hash}"><span class="ti">${tb.icon}</span>${t(tb.key)}</button>`).join("");
-  tabsEl.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => { location.hash = b.dataset.hash; }));
+  const auth = getAuth();
+  const authBtn = auth
+    ? `<button class="tab auth" data-auth="settings" title="${esc(auth.user?.display_name || "")}"><span class="ti">◉</span>${esc((auth.user?.display_name || t("me")).slice(0, 8))}</button>`
+    : `<button class="tab auth" data-auth="login"><span class="ti">◇</span>${t("login")}</button>`;
+  tabsEl.innerHTML = TABS.map((tb) => `<button class="tab ${base === tb.hash ? "active" : ""}" data-hash="${tb.hash}"><span class="ti">${tb.icon}</span>${t(tb.key)}</button>`).join("") + authBtn;
+  tabsEl.querySelectorAll(".tab[data-hash]").forEach((b) => b.addEventListener("click", () => { location.hash = b.dataset.hash; }));
+  tabsEl.querySelectorAll(".tab[data-auth]").forEach((b) => b.addEventListener("click", () => {
+    if (b.dataset.auth === "login") openLoginModal();
+    else location.hash = "#/settings";
+  }));
 }
 
 function router() {
   const h = location.hash || "#/";
   window.scrollTo(0, 0);
-  if (h.startsWith("#/talent/")) renderTalentDetail(h.split("/")[2]);
+  closeModal();
+  if (h.startsWith("#/auth/callback")) handleAuthCallback();
+  else if (h.startsWith("#/talent/")) renderTalentDetail(h.split("/")[2]);
   else if (h.startsWith("#/talents")) renderTalents();
   else if (h.startsWith("#/positions")) renderPositions();
   else if (h.startsWith("#/settings")) renderSettings();

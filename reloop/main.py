@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from reloop.api import positions, recommend, sync, talents
+from reloop.api import auth, positions, recommend, sync, talents
 from reloop.config import settings
 from reloop.db.engine import init_db
 
@@ -58,6 +58,7 @@ def health():
 
 
 # 挂载路由
+app.include_router(auth.router)
 app.include_router(sync.router)
 app.include_router(talents.router)
 app.include_router(positions.router)

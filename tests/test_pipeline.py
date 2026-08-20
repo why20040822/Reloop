@@ -15,7 +15,14 @@ import os
 import sys
 
 # 必须在导入 reloop 之前设置: 覆盖为本地 SQLite, 不连 RDS
-_TEST_DB = os.path.join(os.path.dirname(__file__), "test_reloop.db")
+# 文件名带 PID: 避免旧 schema 残留文件(或并行运行)互相污染
+_TEST_DIR = os.path.dirname(__file__)
+_TEST_DB = os.path.join(_TEST_DIR, f"test_reloop_{os.getpid()}.db")
+for _stale in [f for f in os.listdir(_TEST_DIR) if f.startswith("test_reloop") and f.endswith(".db")]:
+    try:
+        os.remove(os.path.join(_TEST_DIR, _stale))
+    except OSError:
+        pass
 os.environ["BRAINX_DATABASE_URL"] = f"sqlite:///{_TEST_DB.replace(os.sep, '/')}"
 os.environ["BRAINX_LLM_API_KEY"] = ""  # 强制离线模式
 
@@ -150,10 +157,11 @@ def run_pipeline():
         db.commit()
         print("[5] interaction OK: 张三 昨天 2 通电话")
 
-        # ---- 6. 实时触发引擎(粗筛+精算) ----
-        result = recommend_engine.compute(db, OWNER, "HRBP")
+        # ---- 6. 两阶段引擎(粗筛+精算+缓存) ----
+        # 6a. 首次计算(wait=True 同步精算): 返回最终结果
+        result = recommend_engine.compute(db, OWNER, "HRBP", wait=True)
         assert "top3" in result and "top10" in result and "top_n" in result
-        assert result["error"] if False else True
+        assert result["phase"] == "final", f"wait 模式应返回 final, 实际 {result.get('phase')}"
         assert result["position"] == "HRBP"
         assert result["shortlisted"] == 2, f"粗筛应命中张三+赵六, 实际 {result['shortlisted']}"
         print(f"[6] engine OK: 池 {result['total_pool']} 人, 粗筛 {result['shortlisted']} 人, "
@@ -173,6 +181,42 @@ def run_pipeline():
         for it in top:
             assert it["contact_reason"], "联系理由未生成"
 
+        # 6b. 二次计算: 同岗位同 JD 同数据 -> 命中缓存, 不重算
+        result2 = recommend_engine.compute(db, OWNER, "HRBP")
+        assert result2["phase"] == "final" and result2["cached"] is True, \
+            f"二次计算应命中缓存, 实际 phase={result2.get('phase')} cached={result2.get('cached')}"
+        assert result2["top3"][0]["name"] == top[0]["name"], "缓存结果应与首次一致"
+        print("[6b] cache OK: 二次计算直接命中缓存(未重算)")
+
+        # 6c. 轮询接口: 同一 cache_key 查询状态
+        r = recommend_engine.result_of(db, OWNER, "HRBP")
+        assert r["status"] == "done" and r["phase"] == "final"
+        print("[6c] result_of OK: status=done")
+
+        # 6d. 新岗位异步两阶段: 立即返回初筛(preview), 后台线程精算, 轮询到最终结果
+        # (用能命中人才库的岗位; "数据分析"类岗位在纯 HR 测试库中会被噪声阈值正确剔除)
+        db.add(Position(owner_user_id=OWNER, position_name="HR专员",
+                        jd_text="行政 入离职办理", is_active=1))
+        db.commit()
+        prev = recommend_engine.compute(db, OWNER, "HR专员")  # 不 wait
+        assert prev["phase"] == "preview" and prev["computing"] is True, \
+            f"首次计算应秒回 preview, 实际 {prev.get('phase')}"
+        assert prev["top_n"], "初筛应立即给出名单"
+        import time as _time
+        deadline = _time.time() + 60
+        final = None
+        while _time.time() < deadline:
+            r = recommend_engine.result_of(db, OWNER, "HR专员")
+            if r["status"] == "done" and r["phase"] == "final":
+                final = r
+                break
+            assert r["status"] != "failed", f"后台精算失败: {r.get('message')}"
+            _time.sleep(0.3)
+        assert final is not None, "后台精算超时未完成"
+        assert final["top_n"] and final["top_n"][0]["contact_reason"], "最终结果应有精算理由"
+        print(f"[6d] two-phase OK: 初筛秒回 {len(prev['top_n'])} 人 -> 后台精算完成 "
+              f"Top1={final['top_n'][0]['name']}")
+
         # ---- 7. 结果已落库(recommendations 表) ----
         from reloop.db.models import Recommendation
 
@@ -183,6 +227,21 @@ def run_pipeline():
         assert len(recs) == len(result["top_n"]), "推荐结果未完整落库"
         print(f"[7] persist OK: run_id={result['run_id'][:8]}..., 落库 {len(recs)} 条")
 
+        # ---- 7b. 会话 token(飞书登录态) ----
+        from reloop.modules.auth.feishu import (
+            create_session_token,
+            decode_ttc_jwt_unverified,
+            verify_session_token,
+        )
+
+        tok = create_session_token("u123", ttl_hours=1)
+        assert verify_session_token(tok) == "u123"
+        assert verify_session_token(tok + "x") is None  # 篡改签名
+        expired = create_session_token("u123", ttl_hours=-1)
+        assert verify_session_token(expired) is None  # 过期
+        assert decode_ttc_jwt_unverified("not.a.jwt") == {}
+        print("[7b] auth token OK: 签发/校验/篡改/过期/解码 全部通过")
+
         # ---- 8. API 冒烟测试(HTTP 层, 含鉴权/隔离头) ----
         from fastapi.testclient import TestClient
         from reloop.main import app
@@ -192,13 +251,17 @@ def run_pipeline():
         assert c.get("/talents").status_code == 401, "无隔离头应 401"
         r = c.get("/talents", headers={"X-Owner-User-Id": OWNER})
         assert r.status_code == 200 and len(r.json()) == 4
-        r = c.post("/recommend/compute", headers={"X-Owner-User-Id": OWNER})
-        assert r.status_code == 200 and r.json()["top3"][0]["name"] == "张三"
+        r = c.post("/recommend/compute?position_name=HRBP", headers={"X-Owner-User-Id": OWNER})
+        body = r.json()
+        assert r.status_code == 200 and body["top3"][0]["name"] == "张三"
+        assert body["phase"] == "final" and body["cached"] is True, "API 层应命中缓存"
+        r = c.get("/recommend/result?position_name=HRBP", headers={"X-Owner-User-Id": OWNER})
+        assert r.status_code == 200 and r.json()["status"] == "done"
         assert c.get("/openapi.json").status_code == 200
         print("[8] API smoke OK: /health 200, 无头 401(隔离), /talents 4人, "
-              "/recommend/compute Top1=张三, Swagger 可生成")
+              "/recommend/compute 缓存命中 Top1=张三, /recommend/result done, Swagger 可生成")
 
-        print("\n=== 全流程测试通过: TTC同步 -> 结构化 -> 画像库 -> 设岗 -> 引擎 -> TopN ===")
+        print("\n=== 全流程测试通过: TTC同步 -> 结构化 -> 画像库 -> 设岗 -> 两阶段引擎 -> 缓存 -> TopN ===")
         return 0
     finally:
         db.close()

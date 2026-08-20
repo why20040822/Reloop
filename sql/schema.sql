@@ -6,6 +6,8 @@ CREATE TABLE IF NOT EXISTS users (
     user_id       VARCHAR(64)  NOT NULL UNIQUE,
     display_name  VARCHAR(128) NULL,
     ttc_space_id  VARCHAR(64)  NULL,
+    ttc_auth_token TEXT        NULL COMMENT '用户绑定的 TTC 网关 Token(~90天)',
+    ttc_bound_name VARCHAR(128) NULL COMMENT 'TTC Token 解析出的身份昵称',
     created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -84,3 +86,24 @@ CREATE TABLE IF NOT EXISTS feedback_logs (
     created_at       DATETIME    DEFAULT CURRENT_TIMESTAMP,
     INDEX ix_fb_owner (owner_user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 两阶段推荐计算: 持久化结果缓存栈(同 owner+岗位+JD+池版本 命中直接返回)
+CREATE TABLE IF NOT EXISTS recommend_runs (
+    id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+    owner_user_id VARCHAR(64)  NOT NULL,
+    cache_key     VARCHAR(64)  NOT NULL COMMENT 'sha256(owner|岗位|JD|池版本)',
+    position_name VARCHAR(128) NULL,
+    jd_text       TEXT         NULL,
+    status        VARCHAR(16)  DEFAULT 'running' COMMENT 'running/done/failed',
+    pool_version  VARCHAR(128) NULL COMMENT '人才池版本(失效判断留档)',
+    result        JSON         NULL COMMENT '最终结果(top3/top10/top_n)',
+    error         TEXT         NULL,
+    created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,
+    updated_at    DATETIME     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX ix_run_owner_key (owner_user_id, cache_key),
+    INDEX ix_run_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 已有环境升级: users 表补 TTC 绑定列(幂等, 报错可忽略)
+-- ALTER TABLE users ADD COLUMN ttc_auth_token TEXT NULL,
+--     ADD COLUMN ttc_bound_name VARCHAR(128) NULL;

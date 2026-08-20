@@ -34,16 +34,18 @@ class TTCClient:
         self.api_path = settings.ttc_talent_api_path
 
     # ---------------- 拉取 (接口方式) ----------------
-    def fetch_talents(self, space_id: Optional[str] = None) -> list[dict]:
+    def fetch_talents(self, space_id: Optional[str] = None,
+                      auth_token: Optional[str] = None) -> list[dict]:
         """从站点接口拉取人才列表 -> 标准结构化格式列表。
 
         真实接口(gateway.ttcadvisory.com, 需飞书登录态):
           GET {base_url}{api_path}/{space_id}/talents?page=N&page_size=M
           返回 {code, message, data:{list:[...], total:N}}
-        .env 配 BRAINX_TTC_TALENT_AUTH_TOKEN(浏览器 F12 -> Network 复制 Authorization)。
+        token 优先级: auth_token 参数(用户绑定) > .env 全局配置。
         未配置时返回空列表(不报错, 框架可独立运行)。
         """
-        if not self.auth_token:
+        token = auth_token or self.auth_token
+        if not token:
             logger.info("[ttc] 未配置 auth token, 跳过接口拉取(可用 ingest 方式导入)")
             return []
         space_id = space_id or self.default_space_id
@@ -58,7 +60,7 @@ class TTCClient:
                     params={"page": page, "page_size": page_size},
                     headers={
                         "Accept": "application/json",
-                        "Authorization": f"Bearer {self.auth_token}",
+                        "Authorization": f"Bearer {token}",
                     },
                     timeout=20,
                 )
@@ -98,17 +100,19 @@ class TalentSyncService:
         owner_user_id: str,
         raw_payload=None,
         space_id: Optional[str] = None,
+        auth_token: Optional[str] = None,
         db=None,
     ) -> int:
         """为指定用户同步人才库数据(隔离写入)。
 
         raw_payload 传入时走 ingest(页面导出 JSON); 否则尝试接口拉取。
+        auth_token/space_id 未传时用 .env 全局配置。
         返回新增/更新的人才数。
         """
         if raw_payload is not None:
             talents = self.client.ingest_talents(raw_payload)
         else:
-            talents = self.client.fetch_talents(space_id)
+            talents = self.client.fetch_talents(space_id, auth_token=auth_token)
         if not talents:
             logger.info("[sync] no talents for owner=%s", owner_user_id)
             return 0

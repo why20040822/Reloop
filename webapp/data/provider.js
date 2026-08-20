@@ -4,12 +4,14 @@
 import { TALENTS, POSITIONS, INTERACTIONS, computeRecommend } from "./mock.js";
 
 const LS_KEY = "reloop.cfg";
+const LS_AUTH = "reloop.auth";
+
 const DEFAULT_CFG = {
   // 数据模式: live=走真实后端 API; mock=用内置样本(离线演示)
   mode: "live",
   // live 模式下: 留空=同源后端(合并部署默认); 填外部后端地址=远程(需后端开 CORS)
   apiBase: "",
-  // 数据隔离键（后端 X-Owner-User-Id）。默认填已同步 358 人的 open_id
+  // 数据隔离键（后端 X-Owner-User-Id, 仅未登录时使用）。默认填已同步 358 人的 open_id
   ownerId: "ou_ff894386d0ca340dcc2f7bdc53c57a81",
   locale: "zh-CN",
 };
@@ -25,19 +27,29 @@ export function setCfg(patch) {
 }
 export function useMock() { return getCfg().mode === "mock"; }
 
+// —— 飞书扫码登录态 ——
+export function getAuth() {
+  try { return JSON.parse(localStorage.getItem(LS_AUTH) || "null"); } catch { return null; }
+}
+export function setAuth(auth) {
+  localStorage.setItem(LS_AUTH, JSON.stringify(auth));
+}
+export function clearAuth() {
+  localStorage.removeItem(LS_AUTH);
+}
+export function isAuthed() { return !!getAuth()?.token; }
+
 // —— HTTP 客户端（live 模式）——
 async function http(path, { method = "GET", body } = {}) {
   const cfg = getCfg();
+  const auth = getAuth();
   // apiBase 留空 -> 同源相对路径(合并部署默认); 填了 -> 走该外部后端
   const base = cfg.apiBase && cfg.apiBase.trim() ? cfg.apiBase.replace(/\/$/, "") : "";
-  const res = await fetch(base + path, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      "X-Owner-User-Id": cfg.ownerId,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const headers = { "Content-Type": "application/json" };
+  // 已登录走 X-Auth-Token; 未登录回落开发期隔离键
+  if (auth?.token) headers["X-Auth-Token"] = auth.token;
+  else headers["X-Owner-User-Id"] = cfg.ownerId;
+  const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
   if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}`);
   return res.json();
 }
@@ -91,14 +103,20 @@ export const api = {
     return http("/positions", { method: "POST", body });
   },
 
+  // 两阶段推荐: 返回 {phase: "final"|"preview", computing, top_n, ...}
   async recommend(positionName) {
     if (useMock()) {
       const r = computeRecommend(positionName);
-      // 应用本地反馈状态
+      r.phase = "final"; r.computing = false; r.cached = true;
       for (const list of [r.top3, r.top10, r.top_n]) for (const it of list) if (_mockFeedback[it.talent_id]) it.status = _mockFeedback[it.talent_id];
       return r;
     }
     return http(`/recommend/compute?position_name=${encodeURIComponent(positionName)}`, { method: "POST" });
+  },
+
+  // 轮询精算结果: {status: done|running|failed|idle, phase, top_n, ...}
+  async recommendResult(positionName) {
+    return http(`/recommend/result?position_name=${encodeURIComponent(positionName)}`);
   },
 
   async feedback(body) {
@@ -109,5 +127,28 @@ export const api = {
   async health() {
     if (useMock()) return { status: "mock" };
     return http("/health");
+  },
+
+  // —— 飞书扫码登录 ——
+  authRedirectUri() {
+    // 扫码成功后飞书重定向回 SPA 回调路由(hash 路由, ?code 挂在 hash 内)
+    return `${location.origin}/#/auth/callback`;
+  },
+  qrcodeUrl() {
+    const cfg = getCfg();
+    const base = cfg.apiBase && cfg.apiBase.trim() ? cfg.apiBase.replace(/\/$/, "") : "";
+    return `${base}/auth/feishu/qrcode?redirect_uri=${encodeURIComponent(this.authRedirectUri())}`;
+  },
+  async feishuLogin(code) {
+    return http("/auth/feishu/login", { method: "POST", body: { code } });
+  },
+  async me() {
+    return http("/auth/me");
+  },
+  async bindTtc(body) {
+    return http("/auth/ttc/bind", { method: "POST", body });
+  },
+  async syncTtc() {
+    return http("/sync/ttc", { method: "POST" });
   },
 };

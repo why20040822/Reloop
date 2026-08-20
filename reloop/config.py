@@ -59,6 +59,15 @@ class Settings(BaseSettings):
     llm_embedding_model: str = "text-embedding-v3"
     llm_timeout: int = 30
 
+    # ---------- 飞书扫码登录 ----------
+    # 自建飞书应用凭证(开放平台-凭证与基础信息)。未配置时 /auth/feishu/* 返回未启用。
+    feishu_app_id: str = ""
+    feishu_app_secret: str = ""
+    # 登录态会话签名密钥: 留空自动用飞书 App Secret 兜底, 再兜底固定串(仅开发)。
+    auth_session_secret: str = ""
+    # 登录态有效期(小时), 默认 7 天
+    auth_session_ttl_hours: int = 168
+
     # ---------- TTC 私域人才库 (数据源) ----------
     ttc_talent_base_url: str = "https://app.ttcadvisory.com"
     ttc_talent_space_id: str = "U2034543869059211264"
@@ -66,6 +75,13 @@ class Settings(BaseSettings):
     ttc_talent_auth_token: str = ""
     # 列表接口路径(按站点真实 XHR 补全)
     ttc_talent_api_path: str = "/api/talents"
+
+    # ---------- 推荐结果缓存(性能核心) ----------
+    # 同一(owner+岗位+JD+数据版本)命中缓存直接返回最终结果, 不再重算。
+    # 单位秒, 默认 7 天; 人才库/互动变化会自动失效(池版本号变化)。
+    recommend_cache_ttl: int = 7 * 24 * 3600
+    # 后台精算超过该秒数仍 running 视为僵死任务, 允许重新触发。默认 15 分钟。
+    recommend_run_stale_seconds: int = 900
 
     # ---------- 评分权重 (加权乘法模型) ----------
     score_w_activity: float = 0.3
@@ -82,6 +98,19 @@ class Settings(BaseSettings):
     activity_absolute_weight: float = 0.4
 
     # ---------- 派生 ----------
+    @property
+    def auth_secret(self) -> str:
+        """登录态签名密钥: 显式配置 > 飞书 App Secret > 开发兜底。"""
+        if self.auth_session_secret:
+            return self.auth_session_secret
+        if self.feishu_app_secret:
+            return self.feishu_app_secret
+        return "reloop-dev-secret"
+
+    @property
+    def feishu_enabled(self) -> bool:
+        return bool(self.feishu_app_id and self.feishu_app_secret)
+
     @property
     def cors_origins_list(self) -> list[str]:
         """把逗号分隔的来源解析成列表; "*" 单独返回 ["*"]。"""
