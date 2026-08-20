@@ -131,13 +131,18 @@ export const api = {
 
   // —— 飞书扫码登录 ——
   authRedirectUri() {
-    // 扫码成功后飞书重定向回 SPA 回调路由(hash 路由, ?code 挂在 hash 内)
+    // 扫码/授权成功后飞书重定向回 SPA 回调路由(hash 路由, ?code 挂在 hash 内)
     return `${location.origin}/#/auth/callback`;
   },
   qrcodeUrl() {
     const cfg = getCfg();
     const base = cfg.apiBase && cfg.apiBase.trim() ? cfg.apiBase.replace(/\/$/, "") : "";
     return `${base}/auth/feishu/qrcode?redirect_uri=${encodeURIComponent(this.authRedirectUri())}`;
+  },
+  // 授权页 URL(在桌面端新窗口打开 -> 飞书官方页显示二维码 ->
+  // 手机扫码确认 -> 电脑上的该窗口自动跳回本站回调, 登录态落在当前浏览器)
+  async feishuLoginUrl() {
+    return http(`/auth/feishu/url?redirect_uri=${encodeURIComponent(this.authRedirectUri())}`);
   },
   async feishuLogin(code) {
     return http("/auth/feishu/login", { method: "POST", body: { code } });

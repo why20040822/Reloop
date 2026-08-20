@@ -328,46 +328,81 @@ async function renderSettings() {
 }
 
 // ============ 飞书扫码登录 ============
-function openLoginModal() {
+// 正确流程: 桌面端新窗口打开飞书官方授权页(页面显示二维码) -> 手机飞书扫码确认
+// -> 授权页所在窗口(电脑)自动跳回 /#/auth/callback?code=... -> 换取登录态存 localStorage。
+// 手机全程只访问 open.feishu.cn, 不需要直连本站(规避移动端链路被重置的问题)。
+let _loginPollTimer = null;
+
+async function openLoginModal() {
   closeModal();
-  const cfg = getCfg();
-  const base = cfg.apiBase && cfg.apiBase.trim() ? cfg.apiBase.replace(/\/$/, "") : "";
-  const qrSrc = `${base}/auth/feishu/qrcode?redirect_uri=${encodeURIComponent(api.authRedirectUri())}`;
   const overlay = document.createElement("div");
-  overlay.className = "overlay" ; overlay.id = "loginOverlay";
+  overlay.className = "overlay"; overlay.id = "loginOverlay";
   overlay.innerHTML = `
     <div class="modal">
       <div class="label">${t("login_feishu")}</div>
-      <div class="qrbox"><img id="loginQr" alt="${t("login_feishu")}"></div>
-      <div class="hint">${t("login_hint")}</div>
+      <button class="btn blue" id="openLoginBtn">${t("login_open")}</button>
+      <div class="hint" id="loginLine">${t("login_hint")}</div>
       <div class="hint muted" style="font-size:11px">${t("login_redirect_note")}</div>
-      <div class="status-line" id="loginLine"></div>
+      <details style="margin-top:4px">
+        <summary class="hint" style="cursor:pointer">${t("login_qr_fold")}</summary>
+        <div class="qrbox"><img id="loginQr" alt="${t("login_feishu")}"></div>
+        <div class="hint muted" style="font-size:11px">${t("login_qr_note")}</div>
+      </details>
       <button class="btn" id="closeLogin">${t("close")}</button>
     </div>`;
   document.body.appendChild(overlay);
   overlay.addEventListener("click", (e) => { if (e.target === overlay) closeModal(); });
   overlay.querySelector("#closeLogin").addEventListener("click", closeModal);
-  const img = overlay.querySelector("#loginQr");
-  img.onerror = () => { overlay.querySelector("#loginLine").textContent = t("login_qr_fail"); };
-  img.src = qrSrc;
+
+  const line = overlay.querySelector("#loginLine");
+  overlay.querySelector("#openLoginBtn").addEventListener("click", async () => {
+    try {
+      const r = await api.feishuLoginUrl();
+      window.open(r.url, "_blank");
+      line.textContent = t("login_waiting");
+    } catch (e) { line.textContent = t("login_qr_fail"); }
+  });
+  // 二维码折叠区展开时才加载(备用: 手机浏览器直接访问本站时用)
+  const qr = overlay.querySelector("#loginQr");
+  overlay.querySelector("details").addEventListener("toggle", () => {
+    if (!qr.src) { qr.src = api.qrcodeUrl(); qr.onerror = () => { line.textContent = t("login_qr_fail"); }; }
+  });
+
+  // 轮询登录态: 回调页(可能是新窗口)写入 localStorage 后这里自动完成登录
+  clearInterval(_loginPollTimer);
+  _loginPollTimer = setInterval(() => {
+    if (!document.getElementById("loginOverlay")) { clearInterval(_loginPollTimer); return; }
+    if (isAuthed()) {
+      clearInterval(_loginPollTimer);
+      closeModal();
+      renderTabs();
+      router(); // 用登录身份重新加载当前视图
+    }
+  }, 1200);
 }
 
 function closeModal() {
   document.getElementById("loginOverlay")?.remove();
+  clearInterval(_loginPollTimer);
 }
 
-// 飞书扫码回调: hash 形如 #/auth/callback?code=xxx&state=yyy
+// 飞书授权回调: 授权码可能落在 hash 内(#/auth/callback?code=...)或 search 里(?code=...#/...)
 async function handleAuthCallback() {
   const hash = location.hash || "";
   const q = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
-  const code = new URLSearchParams(q).get("code");
+  const code = new URLSearchParams(q).get("code") || new URLSearchParams(location.search).get("code");
   view.innerHTML = `<div class="spinner">${code ? t("logging_in") : t("auth_cb_err")}…</div>`;
   if (!code) { setTimeout(() => { location.hash = "#/"; }, 1500); return; }
   try {
     const r = await api.feishuLogin(code);
     setAuth(r);
     renderTabs();
-    location.hash = "#/";
+    // 弹窗场景: 提示成功后自动关闭(跨域限制关不掉时给返回链接)
+    view.innerHTML = `
+      <header class="mast"><div><div class="kicker">${t("kicker")}</div><h1>${t("login_success")}</h1></div></header>
+      <div class="card soft"><div class="hint">${t("logged_as")}: <b>${esc(r.user?.display_name || "")}</b></div>
+      <a class="btn blue" style="display:inline-block;text-align:center;text-decoration:none" href="#/">${t("login_back")}</a></div>`;
+    setTimeout(() => { try { window.close(); } catch (e) { /* 非弹窗场景忽略 */ } }, 2000);
   } catch (e) {
     view.innerHTML = `<div class="empty">${t("auth_cb_err")}<br><button class="btn" onclick="location.hash='#/'">${t("back")}</button></div>`;
   }
