@@ -52,9 +52,16 @@ def get_db() -> Generator[Session, None, None]:
 
 def init_db() -> None:
     """根据 ORM 模型建表(开发/测试用; 生产建议走 sql/schema.sql)。"""
+    import logging
+
     from reloop.db import models  # noqa: F401
 
-    Base.metadata.create_all(bind=engine)
+    try:
+        Base.metadata.create_all(bind=engine)
+    except Exception as e:  # noqa: BLE001
+        # gunicorn 多 worker 并发启动时 create_all 有 check-then-create 竞态,
+        # 表已由其他 worker 建好会抛 1050 —— 忽略, 补列逻辑照常执行。
+        logging.getLogger(__name__).warning("[init_db] create_all skipped: %s", e)
     _ensure_columns()
 
 
