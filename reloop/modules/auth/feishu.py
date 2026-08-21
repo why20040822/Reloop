@@ -8,8 +8,8 @@
   4. 以飞书 open_id 作为 Reloop 用户标识, 签发 HMAC 会话 token(X-Auth-Token)
 
 说明: Reloop 自己的飞书应用拿到的 open_id 与 TTC 平台(TTC 的飞书应用)
-视角的 open_id 不同, 无法直接换 TTC 数据 Token —— TTC Token 由用户在
-TTC 站点登录后获取并绑定(见 /auth/ttc/bind)。
+视角的 open_id 不同; TTC 数据 Token 统一由服务端 .env 的
+BRAINX_TTC_TALENT_AUTH_TOKEN 提供, 不再由用户粘贴绑定。
 
 依赖: 无 SDK, httpx 直连开放接口; 未配置 App ID/Secret 时相关接口返回未启用。
 """
@@ -66,20 +66,6 @@ def verify_session_token(token: str) -> Optional[str]:
         return None
     user_id = payload.get("user_id")
     return user_id if isinstance(user_id, str) and user_id else None
-
-
-def decode_ttc_jwt_unverified(token: str) -> dict:
-    """解码 TTC 网关 JWT 的 payload(仅读取身份声明用于绑定展示, 不做签名校验)。"""
-    try:
-        parts = token.split(".")
-        if len(parts) < 2:
-            return {}
-        p = parts[1]
-        pad = "=" * (-len(p) % 4)
-        data = json.loads(base64.urlsafe_b64decode(p + pad))
-        return data if isinstance(data, dict) else {}
-    except Exception:  # noqa: BLE001
-        return {}
 
 
 class FeishuAuthService:

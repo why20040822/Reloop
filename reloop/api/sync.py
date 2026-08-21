@@ -1,40 +1,44 @@
 """同步路由: TTC 私域人才库 -> 标准结构化 -> 统一人才画像库。
 
-优先用当前登录用户绑定的 TTC Token/空间(见 POST /auth/ttc/bind);
-未绑定时回落 .env 全局 Token(默认空间)。
+TTC Token 统一由服务端 .env 的 BRAINX_TTC_TALENT_AUTH_TOKEN 提供(全局, 不再由用户粘贴绑定);
+所有用户共用同一数据源, 各自同步进自己隔离的 owner_user_id 人才池。
 """
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, owner_user_id
-from reloop.db.models import User
+from reloop.config import settings
 from reloop.modules.sync.client import talent_sync_service
 from reloop.schemas.talent import SyncIngestBody
 
 router = APIRouter(prefix="/sync", tags=["数据同步"])
 
 
-@router.post("/ttc", summary="从 TTC 人才库接口拉取并同步(用我绑定的 Token)")
+@router.post("/ttc", summary="从 TTC 人才库接口拉取并同步(服务端全局 Token)")
 def sync_from_ttc(
     db: Session = Depends(get_db),
     owner: str = Depends(owner_user_id),
 ):
-    user = db.query(User).filter(User.user_id == owner).first()
-    user_token = user.ttc_auth_token if user else None
-    user_space = user.ttc_space_id if user else None
+    token = settings.ttc_talent_auth_token
+    if not token:
+        raise HTTPException(
+            status_code=400,
+            detail="服务端未配置全局 TTC Token(BRAINX_TTC_TALENT_AUTH_TOKEN)",
+        )
+    space_id = settings.ttc_talent_space_id or None
     count = talent_sync_service.sync_for_user(
         owner,
         db=db,
-        space_id=user_space,
-        auth_token=user_token,
+        space_id=space_id,
+        auth_token=token,
     )
     return {
         "ok": True,
         "synced": count,
         "mode": "api",
-        "token_source": "user" if user_token else "global",
-        "space_id": user_space,
+        "token_source": "global",
+        "space_id": space_id,
     }
 
 

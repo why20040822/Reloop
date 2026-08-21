@@ -274,17 +274,10 @@ async function renderSettings() {
     <div class="card soft"><div class="label">${t("account_title")}</div>
       ${meInfo ? `
         <div class="hint">${t("logged_as")}: <b>${esc(meInfo.display_name || meInfo.user_id)}</b> · ${t("pool_count")}: ${meInfo.pool_count}</div>
-        ${meInfo.ttc_bound
-          ? `<div class="hint">${t("ttc_bound_as")}: <b>${esc(meInfo.ttc_bound_name || "?")}</b>${meInfo.ttc_space_id ? ` · ${esc(meInfo.ttc_space_id)}` : ""}</div>`
-          : `<div class="hint">${t("ttc_unbound")}</div>`}
-        <div class="field"><span class="hint">${t("ttc_token")}</span><textarea id="ttcToken" placeholder="${t("ttc_token_ph")}"></textarea></div>
-        <div class="field"><span class="hint">${t("ttc_space")}</span><input id="ttcSpace" value="${esc(meInfo.ttc_space_id || "")}" placeholder="U2034..."></div>
+        <div class="hint">${t("data_isolated")}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn blue" id="ttcBind">${t("ttc_bind_btn")}</button>
-          <button class="btn" id="ttcSync">${t("ttc_sync_btn")}</button>
           <button class="btn" id="logout">${t("logout")}</button>
-        </div>
-        <div class="status-line" id="ttcLine">${t("ttc_hint")}</div>`
+        </div>`
         : `<div class="hint">${t("not_logged_in")}</div>
         <button class="btn blue" id="loginBtn">${t("login_feishu")}</button>`}
     </div>
@@ -304,27 +297,6 @@ async function renderSettings() {
   if (loginBtn) loginBtn.addEventListener("click", openLoginModal);
   const logoutBtn = view.querySelector("#logout");
   if (logoutBtn) logoutBtn.addEventListener("click", () => { clearAuth(); renderSettings(); renderTabs(); });
-  const bindBtn = view.querySelector("#ttcBind");
-  if (bindBtn) bindBtn.addEventListener("click", async () => {
-    const token = view.querySelector("#ttcToken").value.trim();
-    const space = view.querySelector("#ttcSpace").value.trim();
-    const line = view.querySelector("#ttcLine");
-    if (!token) { line.textContent = t("ttc_need_token"); return; }
-    line.textContent = t("ttc_binding");
-    try {
-      const r = await api.bindTtc({ token, space_id: space || null });
-      line.textContent = t("ttc_bound_ok").replace("{name}", r.bound_name || "?") + (r.migrated_rows ? ` · ${t("ttc_migrated").replace("{n}", r.migrated_rows)}` : "");
-    } catch (e) { line.textContent = t("ttc_bind_fail"); }
-  });
-  const syncBtn = view.querySelector("#ttcSync");
-  if (syncBtn) syncBtn.addEventListener("click", async () => {
-    const line = view.querySelector("#ttcLine");
-    line.textContent = t("ttc_syncing");
-    try {
-      const r = await api.syncTtc();
-      line.textContent = t("ttc_synced").replace("{n}", r.synced ?? 0);
-    } catch (e) { line.textContent = t("ttc_sync_fail"); }
-  });
 }
 
 // ============ 飞书扫码登录 ============

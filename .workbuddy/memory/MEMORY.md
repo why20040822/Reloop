@@ -5,7 +5,7 @@
 - FastAPI + SQLAlchemy 2.0；唯一数据库 RDS MySQL(reloop 库, 账号 hayden)。
 - 环境变量统一 `BRAINX_` 前缀；配置入口 `reloop/config.py`(pydantic-settings)。
 - **外部接口只有三类**：TTC 私域人才库(数据源) / 大模型(OpenAI 兼容通用接口) / RDS MySQL。OSS、外部活跃信号、飞书均已移除（用户 2026-08-14 明确要求）。
-- 数据隔离键 = 通用 user_id（请求头 X-Owner-User-Id），存为各表 `owner_user_id`；前端接入登录后只改 `reloop/api/deps.py`。
+- 数据隔离键 = 通用 user_id，存为各表 `owner_user_id`；生产由飞书登录态 `X-Auth-Token` 解析(2026-08-21 后 `auth_require_token=True` 强制)，`X-Owner-User-Id` 仅开发期 fallback。`reloop/api/deps.py::get_current_user` 是唯一鉴权入口。
 - 目录按模块：`reloop/modules/{sync,profile,scoring,recommend}` + api/db/schemas/utils。
 - 评分核心：`modules/scoring/`(factors.py 五因子 + priority.py 加权乘法模型)。权重 .env 的 `BRAINX_SCORE_W_*`。
 - **算法 v2/v3(2026-08-19)**：活跃度=分事件半衰期冷却+绝对/相对混合归一化(α=0.4, `BRAINX_ACTIVITY_ABSOLUTE_WEIGHT`)；匹配度=五维加权(title/skill/semantic/years/edu, 缺失维度权重重归一)，title 维度优先 **LLM 职位语义相似度**(`llm.title_similarity`, 去重分批+进程内缓存, "AI研发工程师"↔"算法工程师"≈0.7)，离线降级 bigram。
@@ -13,7 +13,7 @@
 - **不推 GitHub**（用户 2026-08-19 明确：接口不稳定，改本地+云端保持一致即可；本地 commit 照常，推送用户手动）。
 - 无原生向量库：embedding 存 JSON、应用层算余弦；LLM 无 Key 时哈希向量兜底，全流程离线可跑。
 - **两阶段推荐引擎(2026-08-20)**：`recommend_runs` 表持久缓存(cache_key=sha256(owner|岗位|JD|池版本)，命中 0.02s 秒回)；未命中先回本地快速初筛(无LLM)，LLM 精算后台线程完成后前端轮询 `GET /recommend/result` 更新；精算只对 TopN 生成 LLM 理由。岗位输入=岗位名称+JD，`POST /positions` 同名同JD幂等。
-- **飞书扫码登录(2026-08-20)**：自建 app `cli_aa0f743112789cfd`；`/auth/feishu/*`(QR=segno SVG)+`X-Auth-Token`(HMAC 会话)；user_id=`fs_<我方app的open_id>`。**TTC 网关 Token 是 TTC 自签 JWT(~90天)，payload 含其自家 open_id——我们无法代签，用户须在设置页一次性粘贴绑定**(`/auth/ttc/bind` 自动按 TTC open_id 认领存量数据迁到登录用户)；`/sync/ttc` 优先用户 Token。飞书控制台需配重定向 URL `https://reloop.yorkteam.cn/#/auth/callback`。
+- **飞书扫码登录 + 数据隔离(2026-08-20 起, 2026-08-21 强化)**：自建 app `cli_aa0f743112789cfd`；`/auth/feishu/*`(QR=segno SVG)+`X-Auth-Token`(HMAC 会话)；user_id=`fs_<我方app的open_id>`。**严格 per-user 隔离(2026-08-21)**：生产 `auth_require_token=True` 强制 X-Auth-Token, 否则 401；`X-Owner-User-Id` 仅开发期(auth_require_token=False) fallback, 杜绝伪造越权。`/auth/ttc/bind` 已删除(用户粘贴 TTC Token 绑定流程下线)。**TTC 同步改服务端全局 Token**：`/sync/ttc` 只用 `BRAINX_TTC_TALENT_AUTH_TOKEN`+`BRAINX_TTC_TALENT_SPACE_ID`(不再读 user.ttc_auth_token)；users.ttc_* 列 DEPRECATED 保留不删。飞书控制台需配重定向 URL `https://reloop.yorkteam.cn/#/auth/callback`。
 - **生产库= `reloop_app`**（同实例内网地址 `rm-bp12ok9so2ma3i3j7` = 公网 `ttc-rds-public-0707`，2026-08-20 修正：服务器 .env 原误指 `reloop` 空库）。users.ttc_auth_token 已扩为 TEXT。依赖新增 `segno`。
 - **HTTPS = Let's Encrypt 正式证书(2026-08-20)**：acme.sh(DNS-01, dns_ali) 签发，证书在 `/etc/nginx/ssl/reloop.yorkteam.cn.le.{crt,key}`，自动续期 cron 已装。**80 端口对外被阿里云 ICP 备案拦截（域名未备案），ACME HTTP-01 不可用、必须 DNS-01**；服务器本机测不出该拦截。HTTPS 不受备案拦截影响。
 

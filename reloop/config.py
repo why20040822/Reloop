@@ -35,6 +35,11 @@ class Settings(BaseSettings):
     # 是否允许未知 X-Owner-User-Id 自动注册用户。
     # 开发期 True(联调方便); 生产设 False -> 未注册用户返回 401, 防止任填任进(无鉴权)。
     auth_auto_register: bool = True
+    # 是否强制要求飞书扫码登录态(X-Auth-Token)。
+    # True(生产默认): 任何请求必须带有效登录态, X-Owner-User-Id 不再作为鉴权 fallback,
+    #   杜绝任填隔离键伪造他人数据; 未登录直接 401。
+    # False(开发期): 允许 X-Owner-User-Id 直接指定隔离键(配合 auth_auto_register 联调)。
+    auth_require_token: bool = True
 
     # ---------- 前端静态托管（前后端合并单进程部署） ----------
     serve_webapp: bool = True      # True=后端直接伺服 webapp/ 静态前端, 一条命令起前后端

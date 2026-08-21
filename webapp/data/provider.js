@@ -150,10 +150,4 @@ export const api = {
   async me() {
     return http("/auth/me");
   },
-  async bindTtc(body) {
-    return http("/auth/ttc/bind", { method: "POST", body });
-  },
-  async syncTtc() {
-    return http("/sync/ttc", { method: "POST" });
-  },
 };
