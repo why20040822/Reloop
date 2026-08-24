@@ -53,6 +53,10 @@ _RUNNING_KEYS: set[str] = set()
 _PREVIEW_CACHE_TTL = 60.0
 _PREVIEW_CACHE: dict[str, tuple[float, dict]] = {}
 
+# 进程内最终结果缓存(5分钟): 避免短时间内重复计算同一岗位
+_FINAL_CACHE_TTL = 300.0  # 5分钟
+_FINAL_CACHE: dict[str, tuple[float, dict]] = {}
+
 
 def _iso(v) -> Optional[str]:
     """datetime -> ISO 字符串(结果要存 JSON 列/直接回 JSON 响应)。"""
@@ -97,6 +101,17 @@ class RecommendEngine:
         cache_key = self._cache_key(owner_user_id, pos, pool_version)
 
         # ---- 3. 命中已算完的缓存 -> 直接返回最终结果 ----
+        # 优先检查进程内缓存（更快）
+        final_cached = _FINAL_CACHE.get(cache_key)
+        if final_cached is not None and (time.time() - final_cached[0]) < _FINAL_CACHE_TTL:
+            result = dict(final_cached[1])
+            result["phase"] = "final"
+            result["cached"] = True
+            result["computing"] = False
+            logger.info("[recommend] memory cache hit key=%s pos=%s", cache_key[:12], pos.position_name)
+            return result
+
+        # 再检查数据库缓存
         hit = self._load_final(db, owner_user_id, cache_key)
         if hit is not None:
             result = dict(hit.result or {})
@@ -104,7 +119,9 @@ class RecommendEngine:
             result["phase"] = "final"
             result["cached"] = True
             result["computing"] = False
-            logger.info("[recommend] cache hit key=%s pos=%s", cache_key[:12], pos.position_name)
+            # 同时更新进程内缓存
+            _FINAL_CACHE[cache_key] = (time.time(), result)
+            logger.info("[recommend] db cache hit key=%s pos=%s", cache_key[:12], pos.position_name)
             return result
 
         # ---- 4. 已在后台精算中 -> 直接返回初筛(60s 内复用上次初筛结果) ----
@@ -265,6 +282,16 @@ class RecommendEngine:
             run.status = "done"
             run.result = result
             db.commit()
+
+            # 同时更新进程内缓存
+            _FINAL_CACHE[run.cache_key] = (time.time(), result)
+            # 清理过期的进程内缓存
+            if len(_FINAL_CACHE) > 64:
+                now_ts = time.time()
+                expired_keys = [k for k, (ts, _) in _FINAL_CACHE.items() if now_ts - ts > _FINAL_CACHE_TTL]
+                for k in expired_keys:
+                    _FINAL_CACHE.pop(k, None)
+
             logger.info("[recommend] full compute done run=%s pos=%s items=%d",
                         run_id, pos.position_name, len(items))
         finally:
@@ -503,7 +530,8 @@ class RecommendEngine:
             匹配度走结构化多维(职位/技能/年限/学历)+语义余弦融合。
         use_llm=False(快速初筛): 跳过 LLM 职位相似度与 embedding 调用。
         """
-        now = dt.datetime.now()
+        # 统一使用UTC时间，避免本地时区混用
+        now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         interactions_by_talent = self._load_interactions(db, owner, talents)
 
         # 活跃度 v2: 冷却原始分 + 最近事件新近度, 混合归一化

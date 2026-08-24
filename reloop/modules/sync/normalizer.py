@@ -90,7 +90,8 @@ def parse_datetime(value) -> Optional[dt.datetime]:
         if ts > 1e12:  # 毫秒
             ts /= 1000.0
         try:
-            return dt.datetime.fromtimestamp(ts)
+            # 统一使用UTC时间，避免本地时区混用
+            return dt.datetime.fromtimestamp(ts, tz=dt.timezone.utc).replace(tzinfo=None)
         except (OverflowError, OSError, ValueError):
             return None
     text = str(value).strip()
@@ -101,7 +102,8 @@ def parse_datetime(value) -> Optional[dt.datetime]:
         n, unit = int(m.group(1)), m.group(2)
         delta = {"秒": 1 / 86400, "分": 1 / 1440, "小时": 1 / 24,
                  "天": 1, "周": 7, "月": 30, "年": 365}[unit]
-        return dt.datetime.now() - dt.timedelta(days=n * delta)
+        # 统一使用UTC时间，避免本地时区混用
+        return dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - dt.timedelta(days=n * delta)
     for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d",
                 "%Y年%m月%d日", "%m-%d %H:%M"):
         try:
