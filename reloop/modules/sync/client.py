@@ -11,7 +11,11 @@
 取出后统一走 normalizer.normalize_batch -> 标准结构化格式。
 """
 
+import hashlib
+import json
 import logging
+import threading
+import time
 from typing import Optional
 
 import httpx
@@ -23,6 +27,32 @@ from reloop.modules.sync.normalizer import normalize_batch
 
 logger = logging.getLogger(__name__)
 
+# 同步进度存储: {sync_id: {"total": int, "current": int, "status": str, "message": str}}
+_SYNC_PROGRESS: dict[str, dict] = {}
+_SYNC_LOCK = threading.Lock()
+
+
+def _make_sync_id(owner: str) -> str:
+    return f"{owner}:{int(time.time())}"
+
+
+def get_sync_progress(sync_id: str) -> dict:
+    with _SYNC_LOCK:
+        return dict(_SYNC_PROGRESS.get(sync_id, {"status": "not_found"}))
+
+
+def _update_progress(sync_id: str, **kwargs):
+    with _SYNC_LOCK:
+        p = _SYNC_PROGRESS.get(sync_id, {})
+        p.update(kwargs)
+        _SYNC_PROGRESS[sync_id] = p
+
+
+def _source_hash(talent: dict) -> str:
+    """ talents 内容 hash(用于去重: 同 source_id 且内容不变则 skip)。"""
+    raw = json.dumps(talent, sort_keys=True, ensure_ascii=False)
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()
+
 
 class TTCClient:
     """TTC 私域人才库数据源客户端。"""
@@ -33,45 +63,56 @@ class TTCClient:
         self.auth_token = settings.ttc_talent_auth_token
         self.api_path = settings.ttc_talent_api_path
 
-    # ---------------- 拉取 (接口方式) ----------------
     def fetch_talents(self, space_id: Optional[str] = None,
-                      auth_token: Optional[str] = None) -> list[dict]:
+                      auth_token: Optional[str] = None,
+                      progress_callback=None) -> list[dict]:
         """从站点接口拉取人才列表 -> 标准结构化格式列表。
 
-        真实接口(gateway.ttcadvisory.com, 需飞书登录态):
-          GET {base_url}{api_path}/{space_id}/talents?page=N&page_size=M
-          返回 {code, message, data:{list:[...], total:N}}
-        token 优先级: auth_token 参数(用户绑定) > .env 全局配置。
-        未配置时返回空列表(不报错, 框架可独立运行)。
+        progress_callback(total, current) 可传入以获取拉取进度。
         """
         token = auth_token or self.auth_token
         if not token:
-            logger.info("[ttc] 未配置 auth token, 跳过接口拉取(可用 ingest 方式导入)")
+            logger.info("[ttc] 未配置 auth token, 跳过接口拉取")
             return []
         space_id = space_id or self.default_space_id
         base_path = self.api_path.rstrip("/")
         page, page_size = 1, 100
         all_items: list[dict] = []
+        total = None
         try:
             while True:
                 url = f"{self.base_url}{base_path}/{space_id}/talents"
-                resp = httpx.get(
+                resp = self._request_with_retry(
                     url,
                     params={"page": page, "page_size": page_size},
                     headers={
                         "Accept": "application/json",
                         "Authorization": f"Bearer {token}",
                     },
-                    timeout=20,
                 )
                 if resp.status_code != 200:
-                    logger.warning("[ttc] fetch page=%s status=%s url=%s",
-                                   page, resp.status_code, url)
+                    body_preview = resp.text[:500] if resp.text else ""
+                    logger.warning("[ttc] page=%s status=%s url=%s body=%s", page, resp.status_code, url, body_preview)
                     break
-                data = (resp.json() or {}).get("data") or {}
-                items = data.get("list") or []
+                resp_json = resp.json() or {}
+                data = resp_json.get("data") or {}
+                # 兼容多种响应格式
+                items = (
+                    data.get("list")
+                    or data.get("items")
+                    or data.get("records")
+                    or data.get("talents")
+                    or []
+                )
+                if not items and isinstance(data, list):
+                    items = data
+                if not items and isinstance(resp_json, list):
+                    items = resp_json
+                if total is None:
+                    total = data.get("total") or data.get("count") or resp_json.get("total")
                 all_items.extend(items)
-                total = data.get("total")
+                if progress_callback and total:
+                    progress_callback(total, len(all_items))
                 logger.info("[ttc] page=%s got=%s total=%s", page, len(items), total)
                 if not items or len(items) < page_size:
                     break
@@ -83,9 +124,29 @@ class TTCClient:
             logger.warning("[ttc] fetch error: %s", e)
             return []
 
-    # ---------------- 导入 (页面导出 JSON) ----------------
+    def _request_with_retry(self, url, params=None, headers=None, max_retries=3):
+        """带重试和指数退避的 HTTP GET 请求。"""
+        import time as _time
+        last_resp, last_exc = None, None
+        for attempt in range(max_retries):
+            try:
+                resp = httpx.get(url, params=params, headers=headers, timeout=30)
+                if resp.status_code < 500:
+                    return resp
+                last_resp = resp
+                logger.warning("[ttc] attempt %d/%d server error status=%s", attempt + 1, max_retries, resp.status_code)
+            except (httpx.ConnectError, httpx.ReadTimeout, httpx.ConnectTimeout) as e:
+                last_exc = e
+                logger.warning("[ttc] attempt %d/%d network error: %s", attempt + 1, max_retries, e)
+            if attempt < max_retries - 1:
+                _time.sleep(2 ** attempt)
+        if last_resp:
+            return last_resp
+        if last_exc:
+            raise last_exc
+        raise RuntimeError("[ttc] all retries exhausted")
+
     def ingest_talents(self, raw_payload) -> list[dict]:
-        """把页面导出/复制的原始 JSON 转成标准结构化格式。"""
         return normalize_batch(raw_payload)
 
 
@@ -102,17 +163,22 @@ class TalentSyncService:
         space_id: Optional[str] = None,
         auth_token: Optional[str] = None,
         db=None,
+        progress_callback=None,
     ) -> int:
         """为指定用户同步人才库数据(隔离写入)。
 
         raw_payload 传入时走 ingest(页面导出 JSON); 否则尝试接口拉取。
         auth_token/space_id 未传时用 .env 全局配置。
+        progress_callback(current, total) 用于实时进度。
         返回新增/更新的人才数。
         """
         if raw_payload is not None:
             talents = self.client.ingest_talents(raw_payload)
         else:
-            talents = self.client.fetch_talents(space_id, auth_token=auth_token)
+            talents = self.client.fetch_talents(
+                space_id, auth_token=auth_token,
+                progress_callback=lambda t, c: progress_callback and progress_callback(c, t)
+            )
         if not talents:
             logger.info("[sync] no talents for owner=%s", owner_user_id)
             return 0
@@ -121,20 +187,44 @@ class TalentSyncService:
         db = db or SessionLocal()
         try:
             count = 0
+            skipped = 0
             for t in talents:
-                # 走完整画像结构化: 补 value_score / resume_embedding / tendency_score,
-                # 并 upsert 落库(commit=False -> 只 flush, 由外层统一提交)。
-                # 这是闭环关键: 之前的 _upsert 直接写库跳过了结构化, 导致五因子全空、推荐分恒 0.5。
+                sid = t.get("source_id") or None
+                # 去重: 同 source_id 且 source_payload 内容不变则 skip
+                if sid:
+                    existing = (
+                        db.query(TalentProfile)
+                        .filter(
+                            TalentProfile.owner_user_id == owner_user_id,
+                            TalentProfile.source_id == sid,
+                        )
+                        .first()
+                    )
+                    if existing and _source_hash(existing.source_payload or {}) == _source_hash(t.get("source_payload") or {}):
+                        skipped += 1
+                        if progress_callback:
+                            progress_callback(count + skipped, len(talents))
+                        continue
+                    if existing:
+                        from reloop.modules.profile.structuring import structuring_service as _ss
+                        _ss.enrich_and_save(db, owner_user_id, t, source_id=sid, commit=False)
+                        count += 1
+                        if progress_callback:
+                            progress_callback(count + skipped, len(talents))
+                        continue
                 row = structuring_service.enrich_and_save(
-                    db, owner_user_id, t, source_id=t.get("source_id") or None, commit=False
+                    db, owner_user_id, t, source_id=sid, commit=False
                 )
                 if row:
                     count += 1
+                if progress_callback:
+                    progress_callback(count + skipped, len(talents))
             if own_session:
                 db.commit()
             else:
-                db.flush()  # 外部会话: 保证同请求内后续查询可见; 提交由 get_db 负责
-            logger.info("[sync] owner=%s synced %d talents", owner_user_id, count)
+                db.flush()
+            logger.info("[sync] owner=%s synced=%d skipped=%d total=%d",
+                        owner_user_id, count, skipped, len(talents))
             return count
         except Exception:  # noqa: BLE001
             if own_session:
@@ -143,6 +233,27 @@ class TalentSyncService:
         finally:
             if own_session:
                 db.close()
+
+    def sync_for_user_async(self, owner_user_id: str, **kwargs) -> str:
+        """后台异步同步: 返回 sync_id, 前端轮询进度。"""
+        sync_id = _make_sync_id(owner_user_id)
+        _update_progress(sync_id, total=0, current=0, status="running",
+                         message="准备中…", owner=owner_user_id)
+
+        def _bg():
+            try:
+                def prog(current, total):
+                    _update_progress(sync_id, current=current, total=total,
+                                     status="running", message=f"同步中 ({current}/{total})…")
+                count = self.sync_for_user(owner_user_id, progress_callback=prog, **kwargs)
+                _update_progress(sync_id, status="done", message=f"同步完成: {count} 人",
+                                 current=_SYNC_PROGRESS.get(sync_id, {}).get("total", count))
+            except Exception as e:  # noqa: BLE001
+                logger.exception("[sync] async failed owner=%s", owner_user_id)
+                _update_progress(sync_id, status="failed", message=str(e)[:200])
+
+        threading.Thread(target=_bg, daemon=True).start()
+        return sync_id
 
 
 talent_sync_service = TalentSyncService()

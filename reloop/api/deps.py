@@ -26,46 +26,46 @@ def get_current_user(
 ) -> User:
     """解析当前用户(数据隔离键来源)。
 
-    生产(auth_require_token=True):
-      必须带有效 X-Auth-Token(飞书扫码登录态), 否则 401;
-      X-Owner-User-Id 不再作为鉴权 fallback, 杜绝任填隔离键伪造他人数据。
-
-    开发(auth_require_token=False):
-      允许 X-Awner-User-Id 直接指定隔离键(配合 auth_auto_register 便于联调);
-      仍优先用 X-Auth-Token(登录态优先)。
+    登录态(X-Auth-Token)优先; 未登录时:
+      - auth_allow_guest=True  -> 返回访客用户(共享池)
+      - auth_require_token=False -> 开发期 fallback: X-Owner-User-Id
+      - 否则 401
     """
+    # 1. 登录态优先
     if x_auth_token:
         user_id = verify_session_token(x_auth_token)
-        if not user_id:
+        if user_id:
+            user = db.query(User).filter(User.user_id == user_id).first()
+            if user is not None:
+                return user
+        # Token 无效/过期/用户不存在: 如果允许访客则静默回退，避免前端闪退
+        if settings.auth_allow_guest:
+            logger.info("[auth] token invalid/expired, falling back to guest")
+        else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="登录态无效或已过期, 请重新扫码登录",
             )
-        user = db.query(User).filter(User.user_id == user_id).first()
+
+    # 2. 无登录态: 先看是否允许访客
+    if settings.auth_allow_guest:
+        user = db.query(User).filter(User.user_id == settings.guest_owner_id).first()
         if user is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="登录用户不存在",
-            )
+            user = User(user_id=settings.guest_owner_id, display_name="访客")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
         return user
 
-    # 无登录态: 生产直接拒绝
-    if settings.auth_require_token:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="未登录: 请在设置页扫码登录后访问(缺少 X-Auth-Token)",
-        )
-
-    # 开发期 fallback: X-Owner-User-Id
+    # 3. 开发期 fallback: X-Owner-User-Id
     if not x_owner_user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="缺少 X-Owner-User-Id 请求头(开发期)或 X-Auth-Token 登录态",
+            detail="未登录: 请扫码登录后访问(缺少 X-Auth-Token)",
         )
     user = db.query(User).filter(User.user_id == x_owner_user_id).first()
     if user is None:
         if not settings.auth_auto_register:
-            # 开发期若也关闭自动注册: 未注册用户直接拒绝
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="用户未注册(auth_auto_register=False)",
@@ -76,6 +76,21 @@ def get_current_user(
         db.refresh(user)
         logger.info("[auth] auto-registered user=%s", x_owner_user_id)
     return user
+
+
+def get_optional_user(
+    db: Session = Depends(get_db),
+    x_owner_user_id: Optional[str] = Header(default=None, alias="X-Owner-User-Id"),
+    x_auth_token: Optional[str] = Header(default=None, alias="X-Auth-Token"),
+) -> Optional[User]:
+    """可选用户: 有登录态返回用户实体, 否则 None(不抛异常)。"""
+    if x_auth_token:
+        user_id = verify_session_token(x_auth_token)
+        if user_id:
+            return db.query(User).filter(User.user_id == user_id).first()
+    if x_owner_user_id:
+        return db.query(User).filter(User.user_id == x_owner_user_id).first()
+    return None
 
 
 def owner_user_id(user: User = Depends(get_current_user)) -> str:

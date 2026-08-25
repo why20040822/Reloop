@@ -20,7 +20,15 @@ class TalentOut(BaseModel):
     value_score: Optional[float] = None
     tendency_score: Optional[float] = None
     last_active_at: Optional[dt.datetime] = None
+    resume_updated_at: Optional[dt.datetime] = None
     tags: Optional[list] = None
+    notes: Optional[str] = None
+    stability: Optional[dict] = None
+    work_history: Optional[list] = None
+    projects: Optional[list] = None
+    delivery_records: Optional[list] = None
+    updated_at: Optional[dt.datetime] = None
+    resume_text_preview: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -72,20 +80,19 @@ class RecommendItemOut(BaseModel):
 
 
 class RecommendResultOut(BaseModel):
-    """引擎输出(Top3/Top10/TopN 同构)。"""
+    """引擎输出(Top10/TopN 同构)。"""
     run_id: str
     owner_user_id: str
     position: str
     generated_at: str
     total_pool: int
     shortlisted: int
-    top3: list[RecommendItemOut] = []
     top10: list[RecommendItemOut] = []
     top_n: list[RecommendItemOut] = []
 
 
 class FeedbackCreate(BaseModel):
     talent_id: int
-    action: str = Field(..., description="confirm/reject/correct")
+    action: str = Field(..., description="confirm/reject/correct/fav/unfav")
     corrected_tag: Optional[str] = None
     note: Optional[str] = None

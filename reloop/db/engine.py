@@ -70,6 +70,8 @@ def _ensure_columns() -> None:
 
     升级点:
       - v0.3: users.ttc_auth_token / users.ttc_bound_name(飞书登录 + TTC 绑定)
+      - v3.2: talent_profiles.notes / stability / work_history(运营备注 + 稳定性 + 工作经历)
+      - v3.5: talent_profiles.projects / delivery_records / resume_updated_at
     """
     from sqlalchemy import inspect, text
 
@@ -77,6 +79,16 @@ def _ensure_columns() -> None:
         "users": [
             ("ttc_auth_token", "TEXT NULL"),
             ("ttc_bound_name", "VARCHAR(128) NULL"),
+            ("last_sync_at", "DATETIME NULL"),
+            ("last_sync_count", "INTEGER NULL"),
+        ],
+        "talent_profiles": [
+            ("notes", "TEXT NULL"),
+            ("stability", "JSON NULL"),
+            ("work_history", "JSON NULL"),
+            ("projects", "JSON NULL"),
+            ("delivery_records", "JSON NULL"),
+            ("resume_updated_at", "DATETIME NULL"),
         ],
     }
     insp = inspect(engine)

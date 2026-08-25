@@ -1,14 +1,15 @@
 """推荐路由: 两阶段触发(秒回初筛/缓存命中) + 结果轮询 + 反馈。
 
 前端交互契约:
-  1. 点击岗位 -> POST /recommend/compute
-     - 命中缓存(同岗位同JD同数据版本) -> {phase: "final", cached: true, top_n: [...]}
+  1. 点击岗位 -> POST /recommend/compute?sort_by=activity|match|custom&w_activity=0.5&w_match=0.5
+     - 命中缓存(同岗位同JD同数据版本+同排序+同权重) -> {phase: "final", cached: true, top_n: [...]}
      - 未命中 -> {phase: "preview", computing: true, top_n: [...快速初筛...]}
        (精算在后台跑, 页面立即出人)
-  2. 收到 preview -> 前端每 2~3s 轮询 GET /recommend/result?position_name=...
+  2. 收到 preview -> 前端每 2~3s 轮询 GET /recommend/result?position_name=...&sort_by=...&w_activity=...&w_match=...
      - status=done -> {phase: "final", top_n: [...精算结果...]} 原地更新列表
      - status=running -> 继续轮询
   3. 两次切换同一岗位且任务/数据没变 -> 第 1 步直接命中缓存, 秒开不重算。
+  4. 排序切换: 切换 sort_by 会重建缓存键, 触发新计算(或命中另一排序的缓存)。
 """
 
 import datetime as dt
@@ -17,7 +18,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, owner_user_id
-from reloop.db.models import FeedbackLog, Recommendation, TalentProfile
+from reloop.db.models import FeedbackLog, Recommendation, RecommendRun, TalentProfile
 from reloop.modules.recommend.engine import recommend_engine
 from reloop.schemas.talent import FeedbackCreate
 
@@ -27,25 +28,32 @@ router = APIRouter(prefix="/recommend", tags=["推荐"])
 @router.post("/compute", summary="触发推荐(秒回: 缓存命中给最终结果, 否则给快速初筛+后台精算)")
 def compute(
     position_name: str | None = Query(default=None, description="岗位名, 留空取当前生效岗位"),
+    sort_by: str = Query(default="match", description="排序指标: activity | match | custom"),
+    w_activity: float | None = Query(default=None, description="自定义排序: 活跃度权重(0~1, 与 w_match 和为 1)"),
+    w_match: float | None = Query(default=None, description="自定义排序: 匹配度权重(0~1, 与 w_activity 和为 1)"),
+    force: bool = Query(default=False, description="强制重算(忽略缓存)"),
     db: Session = Depends(get_db),
     owner: str = Depends(owner_user_id),
 ):
-    """输出结构: {run_id, position, phase, cached, computing, top3, top10, top_n}。
+    """输出结构: {run_id, position, phase, cached, computing, sort_by, top3, top10, top_n}。
 
-    每个条目含 talent_id/name/score/score_breakdown(五因子)/contact_reason 等。
-    phase=preview 时 top_n 为快速初筛(无 LLM), 前端应轮询 /recommend/result 更新。
+    每个条目含 talent_id/name/score/score_breakdown(activity+match)/contact_reason 等。
+    phase=preview 时 top_n 为快速初筛(无 LLM 匹配), 前端应轮询 /recommend/result 更新。
     """
-    return recommend_engine.compute(db, owner, position_name)
+    return recommend_engine.compute(db, owner, position_name, sort_by=sort_by, w_activity=w_activity, w_match=w_match, force=force)
 
 
 @router.get("/result", summary="轮询推荐结果(后台精算完成后返回最终结果)")
 def result(
     position_name: str | None = Query(default=None, description="岗位名, 留空取当前生效岗位"),
+    sort_by: str = Query(default="match", description="排序指标: activity | match | custom"),
+    w_activity: float | None = Query(default=None, description="自定义排序: 活跃度权重"),
+    w_match: float | None = Query(default=None, description="自定义排序: 匹配度权重"),
     db: Session = Depends(get_db),
     owner: str = Depends(owner_user_id),
 ):
-    """返回 {status: done/running/failed/idle, ...}。status=done 时含完整结果。"""
-    return recommend_engine.result_of(db, owner, position_name)
+    """返回 {status: done|running|failed|idle, sort_by, ...结果字段}。status=done 时含完整结果。"""
+    return recommend_engine.result_of(db, owner, position_name, sort_by=sort_by, w_activity=w_activity, w_match=w_match)
 
 
 @router.get("/latest", summary="查看最近一次运行的推荐结果")
@@ -107,20 +115,32 @@ def feedback(
         note=body.note,
     )
     db.add(log)
-    # 反馈同步更新推荐条目状态
     if body.action in ("confirm", "reject"):
         db.query(Recommendation).filter(
             Recommendation.owner_user_id == owner,
             Recommendation.talent_id == body.talent_id,
             Recommendation.recommend_date == dt.date.today(),
         ).update({Recommendation.status: "confirmed" if body.action == "confirm" else "rejected"})
-    # 若修正标签, 更新人才 tags
     if body.action == "correct" and body.corrected_tag:
         t = db.get(TalentProfile, body.talent_id)
         if t and t.owner_user_id == owner:
             tags = t.tags or []
             if body.corrected_tag not in tags:
                 tags.append(body.corrected_tag)
+                t.tags = tags
+    if body.action == "fav":
+        t = db.get(TalentProfile, body.talent_id)
+        if t and t.owner_user_id == owner:
+            tags = t.tags or []
+            if "收藏" not in tags:
+                tags.append("收藏")
+                t.tags = tags
+    if body.action == "unfav":
+        t = db.get(TalentProfile, body.talent_id)
+        if t and t.owner_user_id == owner:
+            tags = t.tags or []
+            if "收藏" in tags:
+                tags = [x for x in tags if x != "收藏"]
                 t.tags = tags
     db.commit()
     return {"ok": True}

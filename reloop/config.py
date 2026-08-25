@@ -40,6 +40,10 @@ class Settings(BaseSettings):
     #   杜绝任填隔离键伪造他人数据; 未登录直接 401。
     # False(开发期): 允许 X-Owner-User-Id 直接指定隔离键(配合 auth_auto_register 联调)。
     auth_require_token: bool = True
+    # 是否允许访客(未登录)访问共享人才库。True=未登录时用 guest_owner_id 隔离访问。
+    auth_allow_guest: bool = True
+    # 访客隔离键(未登录时的共享池 owner)
+    guest_owner_id: str = "guest_shared"
 
     # ---------- 前端静态托管（前后端合并单进程部署） ----------
     serve_webapp: bool = True      # True=后端直接伺服 webapp/ 静态前端, 一条命令起前后端
@@ -88,12 +92,13 @@ class Settings(BaseSettings):
     # 后台精算超过该秒数仍 running 视为僵死任务, 允许重新触发。默认 15 分钟。
     recommend_run_stale_seconds: int = 900
 
-    # ---------- 评分权重 (加权乘法模型) ----------
+    # ---------- 评分权重 (双因子加权乘法模型: 活跃度 + 岗位匹配度) ----------
     score_w_activity: float = 0.3
     score_w_match: float = 0.4
-    score_w_value: float = 0.15
-    score_w_relation: float = 0.1
-    score_w_tendency: float = 0.05
+    # DEPRECATED: 以下权重不再参与核心评分, 保留配置项兼容旧 .env
+    score_w_value: float = 0.15     # DEPRECATED
+    score_w_relation: float = 0.1   # DEPRECATED
+    score_w_tendency: float = 0.05  # DEPRECATED
     # 噪声阈值: 综合分低于此值视为噪声剔除。match 改用 max(0,cos) 后分数体系更贴近真实
     # (不再虚高), 阈值相应下调到 0.1; 过高会误杀正常候选人, 过低则放进 match≈0 的真不匹配者。
     score_noise_threshold: float = 0.1

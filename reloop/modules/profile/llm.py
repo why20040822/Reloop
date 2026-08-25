@@ -50,6 +50,23 @@ TENDENCY_PROMPT = (
     "无明确信号时 score=0.5。\n\n记录:\n{text}"
 )
 
+BATCH_MATCH_PROMPT = (
+    "你是招聘匹配评估专家。评估候选人简历与目标岗位的整体匹配度。\n\n"
+    "【目标岗位】\n{position_name}\n\n"
+    "【JD】\n{jd_text}\n\n"
+    "【候选人列表】\n{candidates}\n\n"
+    "评分规则(0~1浮点):\n"
+    "- 0.9-1.0: 高度匹配, 核心能力/经验高度对齐, 可快速上手\n"
+    "- 0.7-0.9: 强相关, 大部分要求满足, 少量适应期\n"
+    "- 0.5-0.7: 部分匹配, 有相关背景但需培训/过渡\n"
+    "- 0.3-0.5: 弱匹配, 核心技能有明显差距\n"
+    "- 0.0-0.3: 基本不匹配\n\n"
+    "注意: JD 长度不影响基准。短 JD 不代表全员高分, 长 JD 也不代表全员低分, "
+    "只看候选人背景与岗位要求的实质匹配程度。\n\n"
+    "严格只输出 JSON 数组:\n"
+    '[{{"idx": 1, "score": 0.85}}, {{"idx": 2, "score": 0.62}}, ...]'
+)
+
 
 # ---------------------------------------------------------------------
 # 离线兜底 embedding: 字符 bigram 哈希 -> 固定维向量 (确定性, 无需 API)
@@ -253,8 +270,68 @@ class LLMService:
                 _TITLE_SIM_CACHE[(jd_position, p)] = score
         return result
 
+    def batch_match_scores(self, position_name: str, jd_text: str,
+                           candidates: list[dict], batch_size: int = 20) -> dict[int, float]:
+        """批量 JD vs 简历匹配度评分(主通道)。
 
-# 进程内岗位相似度缓存: {(jd_position, talent_position): score}
+        candidates: [{"idx": 1, "name": "...", "position": "...", "company": "...",
+                      "skills": [...], "work_years": N, "education": "..."}, ...]
+        返回 {idx: score}。LLM 不可用时返回空 dict(调用方降级到结构化)。
+        """
+        if not self._available or not candidates:
+            return {}
+        result: dict[int, float] = {}
+        todo: list[dict] = []
+        for c in candidates:
+            cached = _MATCH_SCORE_CACHE.get((position_name, jd_text, c.get("idx")))
+            if cached is not None:
+                result[c["idx"]] = cached
+            else:
+                todo.append(c)
+        for i in range(0, len(todo), batch_size):
+            batch = todo[i:i + batch_size]
+            lines = []
+            for j, c in enumerate(batch, start=1):
+                skills = ", ".join(c.get("skills") or [])
+                lines.append(
+                    f"{j}. {c.get('name', '')}: {c.get('position', '')} @ {c.get('company', '')}, "
+                    f"技能: {skills}, {c.get('work_years', '?')}年经验, {c.get('education', '?')}"
+                )
+            prompt = BATCH_MATCH_PROMPT.format(
+                position_name=position_name,
+                jd_text=jd_text[:2000] if jd_text else "",
+                candidates="\n".join(lines),
+            )
+            data = self.chat_json(prompt)
+            if not isinstance(data, list):
+                logger.warning("[llm] batch_match invalid, len=%d", len(batch))
+                continue
+            for item in data:
+                try:
+                    idx = int(item.get("idx"))
+                    score = float(item.get("score"))
+                except (TypeError, ValueError):
+                    continue
+                score = max(0.0, min(1.0, score))
+                result[idx] = score
+                _MATCH_SCORE_CACHE[(position_name, jd_text, idx)] = score
+        # 分位校准：将 LLM 分数按分位映射到 [0.1, 0.9]，避免全员偏高/偏低
+        if result:
+            scores = list(result.values())
+            lo, hi = min(scores), max(scores)
+            if hi - lo > 1e-6:
+                def calibrate(v):
+                    # 线性映射到 [0.1, 0.9]
+                    return 0.1 + 0.8 * (v - lo) / (hi - lo)
+                result = {k: calibrate(v) for k, v in result.items()}
+        return result
+
+
+# 进程内批量匹配缓存: (position_name, jd_text, candidate_idx) -> score
+_MATCH_SCORE_CACHE: dict[tuple[str, str, int], float] = {}
+
+
+# 进程内岗位相似度缓存
 # 岗位不变/人才库不变时, 二次推荐不再产生 LLM 调用
 _TITLE_SIM_CACHE: dict[tuple[str, str], float] = {}
 

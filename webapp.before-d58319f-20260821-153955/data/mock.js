@@ -1,5 +1,6 @@
 // Reloop 触达工作台 — 真实感 mock 数据（严格对齐后端接口契约）
-// TalentOut / PositionOut / RecommendItemOut(score_breakdown 双因子) / InteractionRecord
+// TalentOut / PositionOut / RecommendItemOut(score_breakdown 五因子) / InteractionRecord
+// 数据设计上覆盖多样场景：不同 base / 公司等级 / 学历 / 稀缺技能 / 活跃度 / 有无互动。
 
 const days = (n) => new Date(Date.now() - n * 86400000).toISOString();
 
@@ -25,7 +26,7 @@ export const POSITIONS = [
   { id: 2, position_name: "HRBP", jd_text: "组织发展 招聘 OD 员工关系", is_active: true },
 ];
 
-// —— 互动记录 ——
+// —— 互动记录（历史关系 + 活跃信号来源）——
 export const INTERACTIONS = {
   101: [ { interaction_type: "call", count: 2, summary: "初步沟通职业规划，反馈积极", occurred_at: days(4) }, { interaction_type: "message", count: 5, summary: "微信保持联系", occurred_at: days(1) } ],
   102: [ { interaction_type: "interview", count: 1, summary: "一面通过，等二面排期", occurred_at: days(10) } ],
@@ -33,7 +34,7 @@ export const INTERACTIONS = {
   109: [ { interaction_type: "call", count: 1, summary: "电话约喝咖啡", occurred_at: days(3) } ],
 };
 
-// —— 联系理由 ——
+// —— 联系理由 & 因子解读文案（离线时后端走模板；这里造真实感样本）——
 const REASONS = {
   101: "近期高度活跃且与商业分析师岗位高度匹配，今天优先联系。",
   102: "历史关系深、面试在途，建议约短电话推进。",
@@ -44,30 +45,31 @@ const REASONS = {
   112: "求职意愿强、活跃度高，虽资历尚浅但性价比高。",
 };
 
-// 双因子 breakdown（v3 仅保留 activity + match）
+// 五因子键：activity / match / value / relationship / tendency
 const BREAKDOWN = {
-  101: { activity: 0.94, match: 0.92 },
-  102: { activity: 0.62, match: 0.85 },
-  103: { activity: 0.7, match: 0.83 },
-  104: { activity: 0.34, match: 0.8 },
-  105: { activity: 0.9, match: 0.74 },
-  109: { activity: 0.82, match: 0.76 },
-  110: { activity: 0.5, match: 0.72 },
-  112: { activity: 0.9, match: 0.7 },
-  107: { activity: 0.55, match: 0.68 },
+  101: { activity: 0.94, match: 0.92, value: 0.86, relationship: 0.71, tendency: 0.78 },
+  102: { activity: 0.62, match: 0.85, value: 0.79, relationship: 0.88, tendency: 0.5 },
+  103: { activity: 0.7, match: 0.83, value: 0.72, relationship: 0.2, tendency: 0.62 },
+  104: { activity: 0.34, match: 0.8, value: 0.81, relationship: 0.2, tendency: 0.5 },
+  105: { activity: 0.9, match: 0.74, value: 0.64, relationship: 0.45, tendency: 0.71 },
+  109: { activity: 0.82, match: 0.76, value: 0.7, relationship: 0.5, tendency: 0.66 },
+  110: { activity: 0.5, match: 0.72, value: 0.68, relationship: 0.2, tendency: 0.52 },
+  112: { activity: 0.9, match: 0.7, value: 0.62, relationship: 0.2, tendency: 0.74 },
+  107: { activity: 0.55, match: 0.68, value: 0.55, relationship: 0.2, tendency: 0.58 },
 };
 
-// 双因子加权（v3: activity × match）
-const W = { activity: 0.5, match: 0.5 };
-function weightedProduct(b, w_activity, w_match) {
-  const wa = w_activity != null ? w_activity : W.activity;
-  const wm = w_match != null ? w_match : W.match;
-  return Math.pow(Math.max(b.activity, 1e-6), wa)
-    * Math.pow(Math.max(b.match, 1e-6), wm);
+// 加权乘法模型（复刻后端 priority.weighted_product，权重同 .env 默认）
+const W = { activity: 0.3, match: 0.4, value: 0.15, relationship: 0.1, tendency: 0.05 };
+function weightedProduct(b) {
+  return Math.pow(Math.max(b.activity, 1e-6), W.activity)
+    * Math.pow(Math.max(b.match, 1e-6), W.match)
+    * Math.pow(Math.max(b.value, 1e-6), W.value)
+    * Math.pow(Math.max(b.relationship, 1e-6), W.relationship)
+    * Math.pow(Math.max(b.tendency, 1e-6), W.tendency);
 }
 
 // 依据岗位关键词粗筛 + 精算，产出 RecommendResultOut 结构
-export function computeRecommend(positionName, sort_by = "match", w_activity, w_match) {
+export function computeRecommend(positionName) {
   const pos = POSITIONS.find((p) => p.position_name === positionName) || POSITIONS[0];
   const kw = pos.position_name;
   const pool = TALENTS.length;
@@ -77,14 +79,11 @@ export function computeRecommend(positionName, sort_by = "match", w_activity, w_
   );
   const ranked = shortlisted
     .map((t) => {
-      const b = BREAKDOWN[t.id] || { activity: 0.4, match: 0.6 };
-      return { t, b };
+      const b = BREAKDOWN[t.id] || { activity: 0.4, match: 0.6, value: t.value_score ?? 0.5, relationship: 0.2, tendency: t.tendency_score ?? 0.5 };
+      return { t, b, score: weightedProduct(b) };
     })
-    .filter((r) => weightedProduct(r.b, w_activity, w_match) >= 0.2)
-    .sort((a, b) => {
-      if (sort_by === "activity") return b.b.activity - a.b.activity;
-      return b.b.match - a.b.match;
-    });
+    .filter((r) => r.score >= 0.2)
+    .sort((a, b) => b.score - a.score);
 
   const items = ranked.map((r, i) => ({
     rank: i + 1,
@@ -95,7 +94,7 @@ export function computeRecommend(positionName, sort_by = "match", w_activity, w_
     base_location: r.t.base_location,
     work_years: r.t.work_years,
     education: r.t.education,
-    score: Math.round((sort_by === "activity" ? r.b.activity : r.b.match) * 10000) / 10000,
+    score: Math.round(r.score * 10000) / 10000,
     score_breakdown: Object.fromEntries(Object.entries(r.b).map(([k, v]) => [k, Math.round(v * 10000) / 10000])),
     last_active_at: r.t.last_active_at,
     contact_reason: REASONS[r.t.id] || `近期活跃且与${kw}岗位匹配，建议尽快联系。`,

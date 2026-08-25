@@ -68,6 +68,22 @@ def verify_session_token(token: str) -> Optional[str]:
     return user_id if isinstance(user_id, str) and user_id else None
 
 
+def decode_ttc_jwt_unverified(token: str) -> dict:
+    """解码 TTC JWT（不验签）, 返回 claims 字典。失败返回空字典。"""
+    if not token or "." not in token:
+        return {}
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
+    payload = parts[1]
+    pad = "=" * (-len(payload) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(payload + pad)
+        return json.loads(decoded) if decoded else {}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 class FeishuAuthService:
     """飞书开放平台 OAuth 封装(httpx 直连, 无 SDK)。"""
 

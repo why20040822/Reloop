@@ -10,6 +10,102 @@
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
+  <!-- 移动端菜单按钮 -->
+  <button class="mobile-menu-btn" id="mobileMenuBtn" title="打开菜单">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+  </button>
+
+  <!-- 侧边栏背景遮罩 -->
+  <div class="sidebar-backdrop" id="sidebarBackdrop"></div>
+
+  <!-- 侧边栏 -->
+  <aside id="sidebar" class="sidebar">
+    <div class="sidebar-head">
+      <div class="brand">
+        <span class="brand-mark">R</span>
+        <span class="brand-name">RE:LOOP</span>
+      </div>
+      <button class="sidebar-collapse-btn" id="sidebarCollapseBtn" title="收起侧栏">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 17l-5-5 5-5M18 17l-5-5 5-5"/></svg>
+      </button>
+    </div>
+    <button class="workspace-switch" title="RE:LOOP 工作区">
+      <span class="workspace-logo">R</span>
+      <span>
+        <strong>RE:LOOP 工作区</strong>
+        <small>企业版</small>
+      </span>
+    </button>
+    <nav class="main-nav">
+      <div class="nav-section">
+        <span class="nav-label">主菜单</span>
+        <a href="#/" class="nav-item active" data-nav="home"><span class="nav-icon">◆</span><span>总览</span></a>
+        <a href="#/talents" class="nav-item" data-nav="talents"><span class="nav-icon">▤</span><span>人才库</span></a>
+        <a href="#/positions" class="nav-item" data-nav="positions"><span class="nav-icon">▣</span><span>岗位管理</span></a>
+      </div>
+      <div class="nav-section">
+        <span class="nav-label">工作空间</span>
+        <a href="#/talents?filter=followed" class="nav-item" data-nav="followed"><span class="nav-icon">★</span><span>特别关注人选</span><em id="followedCount" class="nav-badge">0</em></a>
+        <a href="#/settings" class="nav-item" data-nav="settings"><span class="nav-icon">⚙</span><span>数据连接</span></a>
+      </div>
+    </nav>
+    <div class="sidebar-spacer"></div>
+    <div class="data-health" id="dataHealthBar">
+      <span class="data-health-copy">
+        <span class="status-orb"><span></span></span>
+        <span>
+          <strong>数据状态良好</strong>
+          <small>点击查看详情</small>
+        </span>
+      </span>
+    </div>
+    <div class="sidebar-bottom">
+      <button class="sidebar-bottom-btn" id="themeToggleBtn" title="切换主题">
+        <span class="theme-icon">🌙</span>
+        <span>深色模式</span>
+      </button>
+      <button class="sidebar-bottom-btn" id="helpBtn">
+        <span class="nav-icon">?</span>
+        <span>帮助中心</span>
+      </button>
+      <button class="sidebar-login-btn" id="sidebarLoginBtn" title="登录飞书" style="display:none">
+        <span>🔑</span>
+        <span>登录飞书</span>
+      </button>
+      <div class="profile-mini" id="profileMini" title="用户资料" style="display:none">
+        <span class="avatar avatar-sm">U</span>
+        <span>
+          <strong>用户</strong>
+          <small>未登录</small>
+        </span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- 搜索遮罩 -->
+  <div class="search-overlay" id="searchOverlay">
+    <div class="search-backdrop" id="searchBackdrop"></div>
+    <div class="search-panel">
+      <div class="search-input-wrap">
+        <svg class="search-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+        <input type="text" id="searchInput" placeholder="搜索人才、公司或职位…" autocomplete="off">
+        <button class="search-close" id="searchCloseBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+      <div class="search-results" id="searchResults"></div>
+      <div class="search-footer">
+        <span><kbd>↑</kbd><kbd>↓</kbd> 选择</span>
+        <span><kbd>↵</kbd> 打开</span>
+        <span><kbd>esc</kbd> 关闭</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast 容器 -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- 主内容 -->
   <main class="app-shell">
     <section class="frame" id="view" aria-live="polite"></section>
   </main>

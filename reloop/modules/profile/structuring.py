@@ -32,15 +32,9 @@ class StructuringService:
         source_id: Optional[str] = None,
         commit: bool = True,
     ) -> TalentProfile:
-        """talent: normalizer 输出的标准结构化 dict。
-
-        commit=True: 单条落库场景, 立即提交并 refresh(拿到自增 id)。
-        commit=False: 批量同步场景, 只 flush(同会话内可见、拿到 id),
-                      由外层统一 commit, 避免逐条提交的性能损耗与事务边界混乱。
-        """
         text = talent.get("summary") or ""
 
-        # ---- 1. LLM 增强(可选): 抽取 company_tier / tendency / 补充技能 ----
+        # ---- 1. LLM 增强(可选): 抽取 company_tier / 补充技能 ----
         extra = llm_service.structure_talent(text) if text else {}
         company_tier = extra.get("company_tier") or "一般"
         skills = talent.get("skills") or []
@@ -48,7 +42,7 @@ class StructuringService:
         if isinstance(extra_skills, list):
             skills = list(dict.fromkeys(skills + [str(s) for s in extra_skills]))
 
-        # ---- 2. 人才价值静态分 (公司等级+学历+稀缺技能 -> [0,1]) ----
+        # ---- 2. 人才价值静态分 (保留但不纳入核心评分) ----
         raw_val = raw_value_score(
             company_tier=str(company_tier),
             education=talent.get("education") or "本科",
@@ -56,17 +50,17 @@ class StructuringService:
         )
         value = normalize_value(raw_val)
 
-        # ---- 3. 求职倾向 (LLM, 离线为 None -> 后续按中性 0.5 处理) ----
+        # ---- 3. 求职倾向 (保留但不纳入核心评分) ----
         tendency = extra.get("tendency_score")
         try:
             tendency = float(tendency) if tendency is not None else None
         except (TypeError, ValueError):
             tendency = None
 
-        # ---- 4. 画像文本向量 (真实接口或本地哈希兜底) ----
+        # ---- 4. 画像文本向量 ----
         embedding = llm_service.embed(text)
 
-        # ---- 5. 落库 (owner 隔离; source_id 去重 upsert) ----
+        # ---- 5. 落库 ----
         sid = source_id or talent.get("source_id") or None
         existing = None
         if sid:
@@ -92,8 +86,14 @@ class StructuringService:
             value_score=value,
             tendency_score=tendency,
             last_active_at=talent.get("last_active_at"),
+            resume_updated_at=talent.get("resume_updated_at"),
             tags=talent.get("tags") or [],
-            source_payload=talent.get("raw"),
+            source_payload=talent.get("raw") or talent.get("source_payload"),
+            notes=talent.get("notes"),
+            stability=talent.get("stability"),
+            work_history=talent.get("work_history"),
+            projects=talent.get("projects"),
+            delivery_records=talent.get("delivery_records"),
         )
         if existing:
             for k, v in fields.items():
@@ -107,7 +107,7 @@ class StructuringService:
             db.commit()
             db.refresh(profile)
         else:
-            db.flush()  # 批量: 同会话内可见并拿到自增 id, 提交交给外层
+            db.flush()
         logger.info("[structure] saved talent id=%s owner=%s", profile.id, owner_user_id)
         return profile
 

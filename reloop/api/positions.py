@@ -1,6 +1,6 @@
 """当前招聘岗位路由(设定后实时触发推荐引擎)。"""
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, owner_user_id
@@ -17,8 +17,11 @@ def set_position(
     db: Session = Depends(get_db),
     owner: str = Depends(owner_user_id),
 ):
-    # 幂等: 同名且 JD 未变的生效岗位直接复用(不动 jd_embedding, 稳定缓存键,
-    # 避免每次重设岗位都触发全量重算)
+    active_count = (
+        db.query(Position)
+        .filter(Position.owner_user_id == owner, Position.is_active == 1)
+        .count()
+    )
     existing = (
         db.query(Position)
         .filter(
@@ -32,7 +35,9 @@ def set_position(
     if existing is not None and (existing.jd_text or "") == (body.jd_text or ""):
         return existing
 
-    # 同名旧岗位(或 JD 已变化的)置为失效
+    if existing is None and active_count >= 10:
+        raise HTTPException(400, "最多同时生效 10 个岗位，请先停用旧岗位")
+
     db.query(Position).filter(
         Position.owner_user_id == owner,
         Position.is_active == 1,
@@ -63,3 +68,17 @@ def list_positions(
         .order_by(Position.created_at.desc())
         .all()
     )
+
+
+@router.delete("/{position_id}", summary="删除/停用岗位")
+def delete_position(
+    position_id: int,
+    db: Session = Depends(get_db),
+    owner: str = Depends(owner_user_id),
+):
+    pos = db.get(Position, position_id)
+    if not pos or pos.owner_user_id != owner:
+        raise HTTPException(404, "岗位不存在")
+    db.delete(pos)
+    db.commit()
+    return {"ok": True}

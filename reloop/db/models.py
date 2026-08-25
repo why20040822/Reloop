@@ -61,6 +61,8 @@ class User(Base):
     ttc_auth_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # TTC Token 解析出的身份(展示用, 已弃用)
     ttc_bound_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    last_sync_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)
+    last_sync_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -88,16 +90,28 @@ class TalentProfile(Base):
     resume_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 画像文本向量 (RDS MySQL 无向量类型, JSON 存, 应用层算余弦)
     resume_embedding: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    # 人才价值静态分 (公司等级+学历+稀缺技能, 0~1)
+    # DEPRECATED(2026-08-24): 不再纳入核心评分, 保留列供历史数据回溯
     value_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
-    # LLM 求职倾向分 (0~1, None=未分析)
+    # DEPRECATED(2026-08-24): 不再纳入核心评分, 保留列供历史数据回溯
     tendency_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # TTC 平台上该人才最近活跃/更新时间 (活跃度因子来源)
     last_active_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)
-    # 人才标签 (HRBP / 投资经理 / 销售...) -> 粗筛
+    # 人才标签 (HRBP / 投资经理 / 销售...) -> 粗筛 + 收藏
     tags: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     # TTC 原始记录(归一化前的字段全量留底, 便于回溯重算)
     source_payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # 运营备注 / 联系记录 / 求职意向标注 (同步时从 TTC 备注字段提取)
+    notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 简历最新更新时间(活跃度核心参考维度, 数据获取成本低且准确性高)
+    resume_updated_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)
+    # 职业发展稳定性指标 (JSON): {avg_tenure, max_tenure, recent_tenure, company_count}
+    stability: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # 工作经历明细 (JSON list): [{company, position, start_date, end_date, duration_months, industry, business_domain}]
+    work_history: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 项目经验 (JSON list): [{name, industry, scenario, tech_stack, description}]
+    projects: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 投递记录 (JSON list): [{position, company, date, status, source}]
+    delivery_records: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
     updated_at: Mapped[dt.datetime] = mapped_column(
         DateTime, default=_now, onupdate=_now

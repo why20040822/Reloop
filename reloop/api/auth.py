@@ -20,6 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, get_current_user
+from reloop.config import settings
 from reloop.db.models import (
     TalentProfile,
     User,
@@ -80,8 +81,28 @@ def feishu_login(
         db.add(user)
     else:
         user.display_name = name or user.display_name
+    # 自动绑定 TTC 空间 ID(服务端全局配置, 记录到用户表方便追踪)
+    if settings.ttc_talent_space_id and not user.ttc_space_id:
+        user.ttc_space_id = settings.ttc_talent_space_id
     db.commit()
     token = create_session_token(user_id)
+    # 登录后自动触发同步(异步, 不阻塞登录响应)
+    try:
+        from reloop.modules.sync.client import talent_sync_service
+        import threading
+        def _auto_sync():
+            try:
+                talent_sync_service.sync_for_user(
+                    user_id,
+                    space_id=settings.ttc_talent_space_id,
+                    auth_token=settings.ttc_talent_auth_token,
+                )
+                logger.info("[auth] auto-sync completed for %s", user_id)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[auth] auto-sync failed for %s: %s", user_id, e)
+        threading.Thread(target=_auto_sync, daemon=True).start()
+    except Exception:  # noqa: BLE001
+        logger.warning("[auth] auto-sync after login failed for %s", user_id)
     return {"token": token, "user": {"user_id": user_id, "display_name": user.display_name}}
 
 

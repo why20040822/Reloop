@@ -26,7 +26,8 @@ from typing import Optional
 STANDARD_KEYS = (
     "source_id", "name", "base_location", "company", "position",
     "work_years", "education", "skills", "summary",
-    "last_active_at", "tags", "raw",
+    "last_active_at", "resume_updated_at", "tags", "raw",
+    "notes", "stability", "work_history", "projects", "delivery_records",
 )
 
 # TTC 字段别名映射: 标准key -> 站点可能出现的字段名(按顺序取第一个命中)
@@ -41,7 +42,13 @@ FIELD_ALIASES = {
     "skills": ("skills", "技能", "tags", "标签", "skillTags"),
     "summary": ("summary", "简介", "备注", "remark", "description", "描述"),
     "last_active_at": ("lastActiveAt", "last_active_at", "最近活跃", "最近活跃时间",
-                       "updatedAt", "更新时间", "updateTime"),
+                       "updatedAt", "更新时间", "updateTime", "resumeUpdatedAt"),
+    "resume_updated_at": ("resumeUpdatedAt", "resume_updated_at", "简历更新时间", "resumeUpdateTime"),
+    "notes": ("notes", "备注", "remark", "运营备注", "联系记录", "顾问备注"),
+    "stability": ("stability", "稳定性", "tenure", "任期"),
+    "work_history": ("workHistory", "work_history", "工作经历", "experience", "experiences"),
+    "projects": ("projects", "projectHistory", "project_history", "项目经验", "projects_list", "projectExperiences"),
+    "delivery_records": ("deliveryRecords", "delivery_records", "投递记录", "applications", "jobApplications", "投递历史"),
 }
 
 # 学历归一
@@ -167,6 +174,9 @@ def _normalize_ttc_api_item(item: dict) -> dict:
       skill.language                  -> skills
       dynamic.macro.last_updated_at   -> last_active_at
       dynamic.macro.target_positions  -> tags (粗筛命中岗位关键词)
+      dynamic.macro.notes/remark      -> notes (运营备注)
+      work.macro.stability/tenure     -> stability (稳定性指标 JSON)
+      work.detail/history             -> work_history (工作经历 JSON list)
       motivation/目标/学历/技能 拼接   -> summary (供 embedding/文本匹配)
     """
     basic = item.get("basic") or {}
@@ -174,6 +184,8 @@ def _normalize_ttc_api_item(item: dict) -> dict:
     edu_macro = (item.get("education") or {}).get("macro") or {}
     work_macro = (item.get("work") or {}).get("macro") or {}
     skill = item.get("skill") or {}
+    work_detail = (item.get("work") or {}).get("detail") or {}
+    work_history_raw = work_detail.get("experiences") or work_detail.get("history") or []
 
     name = (basic.get("name") or {}).get("cn_name") or "未知"
     base_location = _first(basic.get("location") or [])
@@ -186,9 +198,18 @@ def _normalize_ttc_api_item(item: dict) -> dict:
     if isinstance(skills, str):
         skills = [s.strip() for s in re.split(r"[,，、/;；|]", skills) if s.strip()]
     last_active_at = parse_datetime(dyn_macro.get("last_updated_at") or item.get("created_at"))
+    # 简历最新更新时间(活跃度核心参考维度, 数据获取成本低且准确性高)
+    resume_updated_at = parse_datetime(dyn_macro.get("resumeUpdatedAt") or dyn_macro.get("resume_updated_at") or dyn_macro.get("last_updated_at"))
 
     target_positions = dyn_macro.get("target_positions") or []
     tags = list(dict.fromkeys([*target_positions, *([position] if position else [])]))
+
+    # 新字段: notes / stability / work_history / projects / delivery_records
+    notes = dyn_macro.get("notes") or dyn_macro.get("remark") or None
+    stability = _parse_stability(work_macro)
+    work_history = _parse_work_history(work_history_raw)
+    projects = _parse_projects(item)
+    delivery_records = _parse_delivery_records(item)
 
     parts = [str(name)]
     if company:
@@ -208,6 +229,8 @@ def _normalize_ttc_api_item(item: dict) -> dict:
     motivation = dyn_macro.get("motivation")
     if motivation:
         parts.append(motivation)
+    if notes:
+        parts.append(f"备注:{notes}")
     summary = " | ".join(p for p in parts if p)
 
     return {
@@ -221,16 +244,101 @@ def _normalize_ttc_api_item(item: dict) -> dict:
         "skills": skills or [],
         "summary": summary,
         "last_active_at": last_active_at,
+        "resume_updated_at": resume_updated_at,
         "tags": tags or [],
         "raw": item,
+        "notes": notes,
+        "stability": stability,
+        "work_history": work_history,
+        "projects": projects,
+        "delivery_records": delivery_records,
     }
+
+
+def _parse_stability(work_macro: dict) -> Optional[dict]:
+    """从 work.macro 解析稳定性指标。"""
+    if not work_macro:
+        return None
+    avg_tenure = work_macro.get("avg_tenure") or work_macro.get("average_tenure")
+    max_tenure = work_macro.get("max_tenure") or work_macro.get("longest_tenure")
+    recent_tenure = work_macro.get("recent_tenure") or work_macro.get("current_tenure")
+    company_count = work_macro.get("company_count") or work_macro.get("company_number")
+    if any(v is not None for v in [avg_tenure, max_tenure, recent_tenure, company_count]):
+        return {
+            "avg_tenure": float(avg_tenure) if avg_tenure is not None else None,
+            "max_tenure": float(max_tenure) if max_tenure is not None else None,
+            "recent_tenure": float(recent_tenure) if recent_tenure is not None else None,
+            "company_count": int(company_count) if company_count is not None else None,
+        }
+    return None
+
+
+def _parse_work_history(work_history_raw) -> Optional[list]:
+    """从 work.detail/history 解析工作经历列表。"""
+    if not work_history_raw or not isinstance(work_history_raw, list):
+        return None
+    out = []
+    for wh in work_history_raw:
+        if not isinstance(wh, dict):
+            continue
+        out.append({
+            "company": wh.get("company") or wh.get("company_name"),
+            "position": wh.get("position") or wh.get("title"),
+            "start_date": wh.get("start_date") or wh.get("startTime"),
+            "end_date": wh.get("end_date") or wh.get("endTime"),
+            "duration_months": wh.get("duration_months") or wh.get("months"),
+            "industry": wh.get("industry") or wh.get("industry_domain"),
+            "business_domain": wh.get("business_domain") or wh.get("domain"),
+        })
+    return out if out else None
+
+
+def _parse_projects(item: dict) -> Optional[list]:
+    """从 TTC 原始数据解析项目经验列表。"""
+    # 常见字段路径: item.projects / item.projectHistory / item.dynamic.macro.projects
+    raw = item.get("projects") or item.get("projectHistory") or item.get("project_history")
+    if not raw:
+        dyn_macro = (item.get("dynamic") or {}).get("macro") or {}
+        raw = dyn_macro.get("projects") or dyn_macro.get("projectExperiences")
+    if not raw or not isinstance(raw, list):
+        return None
+    out = []
+    for p in raw:
+        if not isinstance(p, dict):
+            continue
+        out.append({
+            "name": p.get("name") or p.get("title") or p.get("project_name"),
+            "industry": p.get("industry") or p.get("industry_domain") or p.get("sector"),
+            "scenario": p.get("scenario") or p.get("business_scenario") or p.get("description"),
+            "tech_stack": p.get("tech_stack") or p.get("techStack") or p.get("technologies"),
+            "description": p.get("description") or p.get("desc"),
+        })
+    return out if out else None
+
+
+def _parse_delivery_records(item: dict) -> Optional[list]:
+    """从 TTC 原始数据解析投递记录列表。"""
+    raw = item.get("deliveryRecords") or item.get("delivery_records") or item.get("applications") or item.get("jobApplications")
+    if not raw or not isinstance(raw, list):
+        return None
+    out = []
+    for d in raw:
+        if not isinstance(d, dict):
+            continue
+        out.append({
+            "position": d.get("position") or d.get("job_title") or d.get("title"),
+            "company": d.get("company") or d.get("company_name"),
+            "date": d.get("date") or d.get("created_at") or d.get("apply_date"),
+            "status": d.get("status") or d.get("application_status"),
+            "source": d.get("source") or d.get("channel"),
+        })
+    return out if out else None
 
 
 def normalize_talent(raw_item: dict) -> Optional[dict]:
     """单条 TTC 原始记录 -> 标准结构化 dict (STANDARD_KEYS)。"""
     if not isinstance(raw_item, dict):
         return None
-    # 真实接口返回嵌套结构, 走专用映射; 否则按平面字段别名(页面导出 JSON)处理
     if _is_ttc_api_item(raw_item):
         return _normalize_ttc_api_item(raw_item)
 
@@ -242,7 +350,6 @@ def normalize_talent(raw_item: dict) -> Optional[dict]:
     company = _pick(raw_item, "company")
     position = _pick(raw_item, "position")
 
-    # summary 为空时拼一个基础画像文本, 保证 embedding 有输入
     summary = _pick(raw_item, "summary")
     if not summary:
         parts = [str(name), company or "", position or ""]
@@ -270,8 +377,14 @@ def normalize_talent(raw_item: dict) -> Optional[dict]:
         "skills": skills or [],
         "summary": summary,
         "last_active_at": parse_datetime(_pick(raw_item, "last_active_at")),
+        "resume_updated_at": parse_datetime(_pick(raw_item, "resume_updated_at")),
         "tags": skills or [],
         "raw": raw_item,
+        "notes": _pick(raw_item, "notes"),
+        "stability": _pick(raw_item, "stability"),
+        "work_history": _pick(raw_item, "work_history"),
+        "projects": _pick(raw_item, "projects"),
+        "delivery_records": _pick(raw_item, "delivery_records"),
     }
 
 

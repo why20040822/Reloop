@@ -1,13 +1,18 @@
-// 可切换数据层：live（后端 API，默认同源） mock（内置真实感样本）
+// 可切换数据层：live（后端 API，默认同源）↔ mock（内置真实感样本）
+// 前后端合并部署后, 后端直接伺服本前端, 因此 live 模式 apiBase 留空即同源调用, 无需配 CORS。
+// 切换只改配置, 业务视图不动。
 import { TALENTS, POSITIONS, INTERACTIONS, computeRecommend } from "./mock.js";
 
 const LS_KEY = "reloop.cfg";
 const LS_AUTH = "reloop.auth";
 
 const DEFAULT_CFG = {
+  // 数据模式: live=走真实后端 API; mock=用内置样本(离线演示)
   mode: "live",
+  // live 模式下: 留空=同源后端(合并部署默认); 填外部后端地址=远程(需后端开 CORS)
   apiBase: "",
-  ownerId: "guest_shared",
+  // 数据隔离键（后端 X-Owner-User-Id, 仅未登录时使用）。默认填已同步 358 人的 open_id
+  ownerId: "ou_ff894386d0ca340dcc2f7bdc53c57a81",
   locale: "zh-CN",
 };
 
@@ -22,6 +27,7 @@ export function setCfg(patch) {
 }
 export function useMock() { return getCfg().mode === "mock"; }
 
+// —— 飞书扫码登录态 ——
 export function getAuth() {
   try { return JSON.parse(localStorage.getItem(LS_AUTH) || "null"); } catch { return null; }
 }
@@ -33,32 +39,26 @@ export function clearAuth() {
 }
 export function isAuthed() { return !!getAuth()?.token; }
 
-// HTTP 客户端: 401 不清除 auth (避免 UI 切换闪退)
+// —— HTTP 客户端（live 模式）——
 async function http(path, { method = "GET", body } = {}) {
   const cfg = getCfg();
   const auth = getAuth();
+  // apiBase 留空 -> 同源相对路径(合并部署默认); 填了 -> 走该外部后端
   const base = cfg.apiBase && cfg.apiBase.trim() ? cfg.apiBase.replace(/\/$/, "") : "";
   const headers = { "Content-Type": "application/json" };
+  // 已登录走 X-Auth-Token; 未登录回落开发期隔离键
   if (auth?.token) headers["X-Auth-Token"] = auth.token;
   else headers["X-Owner-User-Id"] = cfg.ownerId;
   const res = await fetch(base + path, { method, headers, body: body ? JSON.stringify(body) : undefined });
-  if (!res.ok) {
-    // 401 不再清除 auth，避免频繁切换页面导致闪退
-    if (res.status === 401) {
-      console.warn("[http] 401 on", path, "— auth preserved");
-    }
-    throw new Error(`${method} ${path} -> ${res.status}`);
-  }
+  if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}`);
   return res.json();
 }
 
-const _mockFeedback = {};
+// 本地互动记录内存态（mock 模式下 confirm/reject/correct/记互动 用）
+const _mockFeedback = {};   // talent_id -> status
 const _mockInter = JSON.parse(JSON.stringify(INTERACTIONS));
 
-// 前端推荐结果内存缓存
-const _recoCache = new Map(); // key -> {ts, data}
-const RECO_CACHE_TTL = 60000; // 60s
-
+// —— 统一 API（业务视图只认这一层）——
 export const api = {
   async listTalents(keyword = "") {
     if (useMock()) {
@@ -69,19 +69,15 @@ export const api = {
     return http("/talents" + (keyword ? `?keyword=${encodeURIComponent(keyword)}` : ""));
   },
 
-  async listFollowed() {
-    if (useMock()) return TALENTS.filter((t) => (t.tags || []).includes("已关注"));
-    try { return await http("/talents/followed/list"); } catch { return []; }
-  },
-
   async getTalent(id) {
     if (useMock()) return TALENTS.find((t) => t.id === Number(id)) || null;
     return http(`/talents/${id}`);
   },
 
   async getInteractions(id) {
+    // 真实后端目前无「按人查互动」的 GET 接口（见接口差距分析），live 下可展示空
     if (useMock()) return _mockInter[id] || [];
-    return http(`/talents/${id}/interactions`);
+    return [];
   },
 
   async addInteraction(id, body) {
@@ -90,11 +86,6 @@ export const api = {
       return { ok: true };
     }
     return http(`/talents/${id}/interaction`, { method: "POST", body });
-  },
-
-  async followTalent(id) {
-    if (useMock()) return { ok: true, followed: true };
-    return http(`/talents/${id}/follow`, { method: "POST" });
   },
 
   async listPositions() {
@@ -112,75 +103,24 @@ export const api = {
     return http("/positions", { method: "POST", body });
   },
 
-  async deletePosition(positionId) {
+  // 两阶段推荐: 返回 {phase: "final"|"preview", computing, top_n, ...}
+  async recommend(positionName) {
     if (useMock()) {
-      const idx = POSITIONS.findIndex((p) => p.id === positionId);
-      if (idx >= 0) POSITIONS.splice(idx, 1);
-      return { ok: true };
-    }
-    return http(`/positions/${positionId}`, { method: "DELETE" });
-  },
-
-  async syncTTC() {
-    if (useMock()) return { ok: true, sync_id: "mock_sync" };
-    return http("/sync/ttc", { method: "POST" });
-  },
-
-  async syncStatus(syncId) {
-    if (useMock()) return { status: "done", message: "Synced: 12 talents", current: 12, total: 12 };
-    return http(`/sync/ttc/status?sync_id=${encodeURIComponent(syncId)}`);
-  },
-
-  // 两阶段推荐: 带前端缓存
-  async recommend(positionName, sort_by = "match", w_activity, w_match) {
-    const cacheKey = `${positionName}|${sort_by}|${w_activity}|${w_match}`;
-    const cached = _recoCache.get(cacheKey);
-    if (cached && (Date.now() - cached.ts) < RECO_CACHE_TTL) {
-      return { ...cached.data, cached: true };
-    }
-    if (useMock()) {
-      const r = computeRecommend(positionName, sort_by, w_activity, w_match);
+      const r = computeRecommend(positionName);
       r.phase = "final"; r.computing = false; r.cached = true;
-      for (const list of [r.top10, r.top_n]) for (const it of list) if (_mockFeedback[it.talent_id]) it.status = _mockFeedback[it.talent_id];
+      for (const list of [r.top3, r.top10, r.top_n]) for (const it of list) if (_mockFeedback[it.talent_id]) it.status = _mockFeedback[it.talent_id];
       return r;
     }
-    const params = new URLSearchParams({ position_name: positionName, sort_by });
-    if (w_activity != null) params.set("w_activity", w_activity);
-    if (w_match != null) params.set("w_match", w_match);
-    const result = await http(`/recommend/compute?${params.toString()}`, { method: "POST" });
-    if (result.phase === "final") {
-      _recoCache.set(cacheKey, { ts: Date.now(), data: result });
-    }
-    return result;
+    return http(`/recommend/compute?position_name=${encodeURIComponent(positionName)}`, { method: "POST" });
   },
 
-  // 强制重算: 清缓存
-  async recompute(positionName, sort_by = "match", w_activity, w_match) {
-    _recoCache.clear();
-    if (useMock()) {
-      const r = computeRecommend(positionName, sort_by, w_activity, w_match);
-      r.phase = "final"; r.computing = false; r.cached = false;
-      return r;
-    }
-    const params = new URLSearchParams({ position_name: positionName, sort_by, force: "true" });
-    if (w_activity != null) params.set("w_activity", w_activity);
-    if (w_match != null) params.set("w_match", w_match);
-    return http(`/recommend/compute?${params.toString()}`, { method: "POST" });
-  },
-
-  async recommendResult(positionName, sort_by = "match", w_activity, w_match) {
-    const params = new URLSearchParams({ position_name: positionName, sort_by });
-    if (w_activity != null) params.set("w_activity", w_activity);
-    if (w_match != null) params.set("w_match", w_match);
-    return http(`/recommend/result?${params.toString()}`);
+  // 轮询精算结果: {status: done|running|failed|idle, phase, top_n, ...}
+  async recommendResult(positionName) {
+    return http(`/recommend/result?position_name=${encodeURIComponent(positionName)}`);
   },
 
   async feedback(body) {
-    if (useMock()) {
-      if (body.action === "confirm") _mockFeedback[body.talent_id] = "confirmed";
-      if (body.action === "reject") _mockFeedback[body.talent_id] = "rejected";
-      return { ok: true };
-    }
+    if (useMock()) { if (body.action === "confirm") _mockFeedback[body.talent_id] = "confirmed"; if (body.action === "reject") _mockFeedback[body.talent_id] = "rejected"; return { ok: true }; }
     return http("/recommend/feedback", { method: "POST", body });
   },
 
@@ -189,7 +129,9 @@ export const api = {
     return http("/health");
   },
 
+  // —— 飞书扫码登录 ——
   authRedirectUri() {
+    // 扫码/授权成功后飞书重定向回 SPA 回调路由(hash 路由, ?code 挂在 hash 内)
     return `${location.origin}/#/auth/callback`;
   },
   qrcodeUrl() {
@@ -197,6 +139,8 @@ export const api = {
     const base = cfg.apiBase && cfg.apiBase.trim() ? cfg.apiBase.replace(/\/$/, "") : "";
     return `${base}/auth/feishu/qrcode?redirect_uri=${encodeURIComponent(this.authRedirectUri())}`;
   },
+  // 授权页 URL(在桌面端新窗口打开 -> 飞书官方页显示二维码 ->
+  // 手机扫码确认 -> 电脑上的该窗口自动跳回本站回调, 登录态落在当前浏览器)
   async feishuLoginUrl() {
     return http(`/auth/feishu/url?redirect_uri=${encodeURIComponent(this.authRedirectUri())}`);
   },
