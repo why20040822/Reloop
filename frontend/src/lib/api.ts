@@ -13,7 +13,22 @@ export type Talent = {
   tags?: string[] | null;
   notes?: string | null;
 };
-export type Position = { id: number; position_name: string; jd_text?: string | null; is_active: boolean };
+export type JDAnalysis = {
+  title: string;
+  summary: string;
+  responsibilities: string[];
+  required_skills: string[];
+  preferred_skills: string[];
+  experience: string;
+  education: string;
+  location: string;
+  industry_keywords: string[];
+  salary_range: string;
+  team_size: string;
+  reporting_line: string;
+  language_requirements: string[];
+};
+export type Position = { id: number; position_name: string; jd_text?: string | null; jd_analysis?: JDAnalysis | null; jd_analysis_version?: string | null; is_active: boolean };
 export type Interaction = { interaction_type: string; summary?: string | null; occurred_at: string };
 export type Recommendation = {
   rank: number;
@@ -134,7 +149,7 @@ const mockTalents: Talent[] = [
   { id: 1, name: "张韵", base_location: "上海", company: "字节跳动", position: "商业分析师", work_years: 8, education: "复旦大学", skills: ["商业分析", "增长", "SQL"], value_score: .86, tendency_score: .78, last_active_at: new Date(Date.now() - 3600000).toISOString(), tags: ["已关注"] },
   { id: 2, name: "李哲", base_location: "深圳", company: "腾讯", position: "数据产品经理", work_years: 7, education: "中山大学", skills: ["数据策略", "A/B Test"], value_score: .82, tendency_score: .74, last_active_at: new Date(Date.now() - 10800000).toISOString() },
 ];
-let mockPositions: Position[] = [{ id: 1, position_name: "商业分析师", jd_text: "负责业务分析、增长策略与经营复盘", is_active: true }];
+let mockPositions: Position[] = [{ id: 1, position_name: "商业分析师", jd_text: "负责业务分析、增长策略与经营复盘", jd_analysis: { title: "商业分析师", summary: "负责业务分析、增长策略与经营复盘。", responsibilities: ["业务分析", "增长策略", "经营复盘"], required_skills: ["SQL", "商业分析"], preferred_skills: ["Python"], experience: "3 年以上", education: "本科及以上", location: "上海", industry_keywords: ["互联网", "增长"], salary_range: "面议", team_size: "待确认", reporting_line: "业务负责人", language_requirements: ["中文"] }, is_active: true }];
 const mockInteractions = new Map<number, Interaction[]>();
 
 export const api = {
@@ -167,7 +182,11 @@ export const api = {
     return request<{ ok: boolean; followed?: boolean }>(`/talents/${id}/follow`, { method: "POST" });
   },
   async listPositions() { return isMock() ? mockPositions.filter((item) => item.is_active) : request<Position[]>("/positions"); },
-  async setPosition(body: Pick<Position, "position_name" | "jd_text">) {
+  async parseJd(jdText: string) {
+    if (isMock()) return { title: "待确认岗位", summary: jdText.trim(), responsibilities: ["根据 JD 执行岗位职责"], required_skills: ["待确认"], preferred_skills: ["待确认"], experience: "待确认", education: "待确认", location: "待确认", industry_keywords: ["待确认"], salary_range: "待确认", team_size: "待确认", reporting_line: "待确认", language_requirements: ["中文"] } satisfies JDAnalysis;
+    return request<JDAnalysis>("/positions/parse-jd", { method: "POST", body: JSON.stringify({ jd_text: jdText }) });
+  },
+  async setPosition(body: Pick<Position, "position_name" | "jd_text" | "jd_analysis">) {
     if (isMock()) {
       const found = mockPositions.find((item) => item.position_name === body.position_name);
       if (found) return Object.assign(found, body);
