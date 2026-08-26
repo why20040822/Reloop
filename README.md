@@ -211,7 +211,7 @@ resume_updated_at               简历更新时间 (活跃度核心参考维度)
 
 - Python 3.11+（建议 conda 环境 `reloop`）
 - MySQL 8.0+（生产 RDS；本地测试可用 SQLite）
-- 前端无需构建，直接由后端伺服
+- Node.js 18+（构建 React/Vite 前端时需要）
 
 ### 安装
 
@@ -222,7 +222,15 @@ conda activate reloop
 
 # 或 pip
 pip install -r requirements.txt
+
+# 安装锁定的前端依赖并生成由 FastAPI 伺服的静态资源
+npm ci
+npm run build:web
 ```
+
+`frontend/` 是 React/Vite 的唯一源码；`npm run build:web` 会将可复现的生产资源写入
+`webapp/`。日常前端开发可运行 `npm run dev:web`，发布前应运行
+`npm run check:web`、`npm run test:web` 和 `npm run build:web`。
 
 ### 配置
 
@@ -230,19 +238,49 @@ pip install -r requirements.txt
 cp .env.example .env
 # 编辑 .env:
 #   BRAINX_MYSQL_*    — RDS MySQL 连接（生产 reloop_app 库）
-#   BRAINX_LLM_*      — 大模型 API（OpenAI 兼容，智谱/DeepSeek/阶跃 等）
-#   BRAINX_TTC_*      — TTC 人才库全局 Token + Space ID
+#   BRAINX_LLM_*      — 推荐引擎的 OpenAI 兼容模型与 embedding 配置
+#   BRAINX_DEEPSEEK_* — 仅后端的 JD 结构化解析配置
+#   BRAINX_TTC_*      — 访客共享池的可选服务端配置
 #   BRAINX_FEISHU_*   — 飞书应用 App ID/Secret（扫码登录）
 ```
+
+飞书和 TTC 回调固定使用 `BRAINX_AUTH_PUBLIC_BASE_URL`：填写已在提供方登记的公网
+HTTPS 工作台根地址，例如 `https://reloop.example.com`。服务端据此生成
+`/auth/feishu/callback` 与 `/auth/ttc/callback`，浏览器不会提交任意 `redirect_uri`。
+用户登录飞书后，可在“设置”中连接个人 TTC 人才库；个人 TTC 登录态由后端加密保存，
+不返回给浏览器，也不会回退到访客共享凭据。示例文件只保留占位符，不能填写或提交真实
+Token、会话密钥或数据库密码。
+
+### JD 解析与岗位匹配
+
+`POST /positions/parse-jd` 接受非空且不超过 50,000 个字符的 `jd_text`，仅返回可编辑的
+结构化预览，不会创建或更新岗位。确认后再通过 `POST /positions` 原子保存原始 `jd_text`
+和可选 `jd_analysis`；结构化字段包括岗位名称、摘要、职责、必备/加分技能、经验、学历、
+地点、行业关键词、薪资、团队规模、汇报对象和语言要求。带有 `jd_analysis` 的岗位可直接
+进入匹配，未解析岗位会先打开 JD 审阅抽屉。
+
+该能力只读取后端环境变量：
+
+```bash
+BRAINX_DEEPSEEK_API_KEY=
+BRAINX_DEEPSEEK_BASE_URL=https://api.deepseek.com
+BRAINX_DEEPSEEK_MODEL=deepseek-chat
+BRAINX_DEEPSEEK_TIMEOUT_SECONDS=30
+```
+
+DeepSeek 在这里仅用于严格 JSON 的 JD 解析，不提供本项目推荐引擎使用的 embedding
+接口。Embedding 仍由独立的 `BRAINX_LLM_*` 配置提供；DeepSeek 密钥不会写入前端、
+浏览器存储、接口响应或构建产物。
 
 ### 启动（本地）
 
 ```bash
-cd F:\ttc\Reloop
-uvicorn reloop.main:app --reload --port 8000
+uvicorn reloop.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-打开 `http://localhost:8000`，前端由后端自动伺服（`webapp/`），无需单独起前端。
+打开 `http://127.0.0.1:8000`，FastAPI 会同源伺服已构建的 `webapp/`。仅修改前端时，可
+另开终端运行 `npm run dev:web`，再由 Vite 的开发服务器预览；合并部署仍以构建后的
+`webapp/` 为准。
 
 本地开发默认以访客身份（`guest_shared`）访问共享人才池；登录后自动按飞书身份隔离。
 
@@ -257,7 +295,10 @@ curl "http://localhost:8000/sync/ttc/status?sync_id=xxx"
 ### 测试
 
 ```bash
-python tests/test_pipeline.py    # SQLite 覆盖 + LLM 离线，无需任何凭据
+pytest -q
+npm run test:web
+npm run check:web
+npm run build:web
 ```
 
 ### 代码变更流程（遵守 Hayden.md 第六部分）
