@@ -67,17 +67,22 @@ function loading() { view.innerHTML = `<div class="spinner">${t("loading")}…</
 async function renderHome() {
   const seq = ++homeSeq;
   loading();
-  const positions = await api.listPositions();
-  if (seq !== homeSeq) return;
-  if (!CURRENT_POSITION) CURRENT_POSITION = positions[0]?.position_name || "商业分析师";
+  try {
+    const positions = await api.listPositions();
+    if (seq !== homeSeq) return;
+    if (!CURRENT_POSITION) CURRENT_POSITION = positions[0]?.position_name || "商业分析师";
 
-  const reco = await api.recommend(CURRENT_POSITION);
-  if (seq !== homeSeq) return;
-  renderHomeView(positions, reco);
+    const reco = await api.recommend(CURRENT_POSITION);
+    if (seq !== homeSeq) return;
+    renderHomeView(positions, reco);
 
-  // 初筛已出, 后台精算中 -> 轮询直到最终结果, 原地刷新列表
-  if (reco.computing || reco.phase === "preview") {
-    pollFinalResult(seq, CURRENT_POSITION);
+    // 初筛已出, 后台精算中 -> 轮询直到最终结果, 原地刷新列表
+    if (reco.computing || reco.phase === "preview") {
+      pollFinalResult(seq, CURRENT_POSITION);
+    }
+  } catch (e) {
+    if (seq !== homeSeq) return;
+    view.innerHTML = `<div class="empty">${esc(e.message || t("loading") + "失败")}</div>`;
   }
 }
 
@@ -175,8 +180,9 @@ function wireRows() {
 // ============ Talents / 人才库 ============
 async function renderTalents(keyword = "") {
   loading();
-  const list = await api.listTalents(keyword);
-  const rows = list.length ? list.map((tp) => `
+  try {
+    const list = await api.listTalents(keyword);
+    const rows = list.length ? list.map((tp) => `
     <div class="titem" data-id="${tp.id}">
       <div><div class="name-line"><span class="name">${esc(tp.name)}</span><span class="base">${esc(tp.base_location || "")}</span></div>
       <div class="meta">${esc(tp.company || "")} · ${esc(tp.position || "")}</div>
@@ -184,14 +190,17 @@ async function renderTalents(keyword = "") {
       <span class="vscore">${tp.value_score != null ? tp.value_score.toFixed(2) : "—"}</span>
     </div>`).join("") : `<div class="empty">—</div>`;
 
-  view.innerHTML = `
+    view.innerHTML = `
     <header class="mast"><div><div class="kicker">${t("kicker")}</div><h1>${t("talent_pool")}</h1></div></header>
     <div class="searchbar"><div class="field"><input id="kw" placeholder="${t("search_ph")}" value="${esc(keyword)}"></div><button class="btn blue" id="searchBtn">${t("search_btn")}</button></div>
     <div class="tlist">${rows}</div>`;
 
-  view.querySelector("#searchBtn").addEventListener("click", () => renderTalents(view.querySelector("#kw").value.trim()));
-  view.querySelector("#kw").addEventListener("keydown", (e) => { if (e.key === "Enter") renderTalents(e.target.value.trim()); });
-  view.querySelectorAll(".titem").forEach((el) => el.addEventListener("click", () => { location.hash = `#/talent/${el.dataset.id}`; }));
+    view.querySelector("#searchBtn").addEventListener("click", () => renderTalents(view.querySelector("#kw").value.trim()));
+    view.querySelector("#kw").addEventListener("keydown", (e) => { if (e.key === "Enter") renderTalents(e.target.value.trim()); });
+    view.querySelectorAll(".titem").forEach((el) => el.addEventListener("click", () => { location.hash = `#/talent/${el.dataset.id}`; }));
+  } catch (e) {
+    view.innerHTML = `<div class="empty">${esc(e.message || t("loading") + "失败")}</div>`;
+  }
 }
 
 // ============ Talent detail / 人才详情 ============

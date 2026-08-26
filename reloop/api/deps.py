@@ -31,7 +31,7 @@ def get_current_user(
       X-Owner-User-Id 不再作为鉴权 fallback, 杜绝任填隔离键伪造他人数据。
 
     开发(auth_require_token=False):
-      允许 X-Awner-User-Id 直接指定隔离键(配合 auth_auto_register 便于联调);
+      允许 X-Owner-User-Id 直接指定隔离键(配合 auth_auto_register 便于联调);
       仍优先用 X-Auth-Token(登录态优先)。
     """
     if x_auth_token:

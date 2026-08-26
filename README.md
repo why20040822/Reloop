@@ -33,7 +33,10 @@ conda env update -f environment.yml --prune
 
 ```ini
 # ① RDS MySQL —— 用外网地址；本地跑需在 RDS 控制台白名单放行本机公网 IP
-BRAINX_MYSQL_HOST=ttc-rds-public-0707.mysql.rds.aliyuncs.com
+#    (真实地址/账号/密码只放本机与服务器 .env, 禁止提交仓库)
+BRAINX_MYSQL_HOST=<你的 RDS 外网地址>
+BRAINX_MYSQL_USER=<RDS 账号>
+BRAINX_MYSQL_PASSWORD=<RDS 密码>
 BRAINX_MYSQL_DATABASE=reloop_app
 
 # ② 大模型 —— 智谱 BigModel (OpenAI 兼容)

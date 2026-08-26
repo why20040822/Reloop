@@ -75,9 +75,8 @@ export const api = {
   },
 
   async getInteractions(id) {
-    // 真实后端目前无「按人查互动」的 GET 接口（见接口差距分析），live 下可展示空
     if (useMock()) return _mockInter[id] || [];
-    return [];
+    return http(`/talents/${id}/interactions`);
   },
 
   async addInteraction(id, body) {

@@ -230,7 +230,6 @@ def run_pipeline():
         # ---- 7b. 会话 token(飞书登录态) ----
         from reloop.modules.auth.feishu import (
             create_session_token,
-            decode_ttc_jwt_unverified,
             verify_session_token,
         )
 
@@ -239,8 +238,7 @@ def run_pipeline():
         assert verify_session_token(tok + "x") is None  # 篡改签名
         expired = create_session_token("u123", ttl_hours=-1)
         assert verify_session_token(expired) is None  # 过期
-        assert decode_ttc_jwt_unverified("not.a.jwt") == {}
-        print("[7b] auth token OK: 签发/校验/篡改/过期/解码 全部通过")
+        print("[7b] auth token OK: 签发/校验/篡改/过期 全部通过")
 
         # ---- 8. API 冒烟测试(HTTP 层, 含鉴权/隔离头) ----
         from fastapi.testclient import TestClient

@@ -29,7 +29,12 @@ def list_talents(
     """
     q = db.query(TalentProfile).filter(TalentProfile.owner_user_id == owner)
     if keyword:
-        q = q.filter(TalentProfile.name.contains(keyword))
+        from sqlalchemy import or_
+        q = q.filter(or_(
+            TalentProfile.name.contains(keyword),
+            TalentProfile.company.contains(keyword),
+            TalentProfile.position.contains(keyword),
+        ))
     q = q.order_by(TalentProfile.id.desc())
     if limit is not None:
         limit = max(1, min(int(limit), 500))
@@ -63,6 +68,36 @@ def delete_talent(
     db.delete(t)
     db.commit()
     return {"ok": True}
+
+
+@router.get("/{talent_id}/interactions", summary="查询人才的互动记录")
+def get_interactions(
+    talent_id: int,
+    db: Session = Depends(get_db),
+    owner: str = Depends(owner_user_id),
+):
+    t = db.get(TalentProfile, talent_id)
+    if not t:
+        raise HTTPException(404, "人才不存在")
+    assert_owner(TalentProfile, t, owner)
+    rows = (
+        db.query(InteractionRecord)
+        .filter(
+            InteractionRecord.owner_user_id == owner,
+            InteractionRecord.talent_id == talent_id,
+        )
+        .order_by(InteractionRecord.occurred_at.desc())
+        .all()
+    )
+    return [
+        {
+            "interaction_type": r.interaction_type,
+            "count": r.count,
+            "summary": r.summary,
+            "occurred_at": r.occurred_at.isoformat() if r.occurred_at else None,
+        }
+        for r in rows
+    ]
 
 
 @router.post("/{talent_id}/interaction", summary="记录一次互动(历史关系+活跃信号)")
