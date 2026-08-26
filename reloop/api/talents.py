@@ -30,7 +30,12 @@ def list_talents(
     """
     q = db.query(TalentProfile).filter(TalentProfile.owner_user_id == owner)
     if keyword:
-        q = q.filter(TalentProfile.name.contains(keyword))
+        from sqlalchemy import or_
+        q = q.filter(or_(
+            TalentProfile.name.contains(keyword),
+            TalentProfile.company.contains(keyword),
+            TalentProfile.position.contains(keyword),
+        ))
     q = q.order_by(TalentProfile.id.desc())
     
     # 访客模式且池为空时，自动触发一次同步（异步，不阻塞返回）
@@ -111,43 +116,6 @@ def delete_talent(
     db.delete(t)
     db.commit()
     return {"ok": True}
-
-
-@router.get("/followed/list", summary="获取已关注人才列表")
-def list_followed(
-    db: Session = Depends(get_db),
-    owner: str = Depends(owner_user_id),
-):
-    """返回 tags 含 '已关注' 的人才列表。"""
-    q = (
-        db.query(TalentProfile)
-        .filter(TalentProfile.owner_user_id == owner)
-        .all()
-    )
-    followed = [t for t in q if t.tags and "已关注" in t.tags]
-    return followed
-
-
-@router.post("/{talent_id}/follow", summary="关注/取消关注人才")
-def toggle_follow(
-    talent_id: int,
-    db: Session = Depends(get_db),
-    owner: str = Depends(owner_user_id),
-):
-    t = db.get(TalentProfile, talent_id)
-    if not t:
-        raise HTTPException(404, "人才不存在")
-    assert_owner(TalentProfile, t, owner)
-    tags = list(t.tags or [])
-    if "已关注" in tags:
-        tags = [x for x in tags if x != "已关注"]
-        followed = False
-    else:
-        tags.append("已关注")
-        followed = True
-    t.tags = tags
-    db.commit()
-    return {"ok": True, "followed": followed}
 
 
 @router.get("/followed/list", summary="获取已关注人才列表")

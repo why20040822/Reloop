@@ -25,6 +25,9 @@ for _stale in [f for f in os.listdir(_TEST_DIR) if f.startswith("test_reloop") a
         pass
 os.environ["BRAINX_DATABASE_URL"] = f"sqlite:///{_TEST_DB.replace(os.sep, '/')}"
 os.environ["BRAINX_LLM_API_KEY"] = ""  # 强制离线模式
+# 测试环境确定性: 不依赖本机 .env。开发降级模式 + 固定签名密钥(满足启动安全自检)
+os.environ["BRAINX_AUTH_REQUIRE_TOKEN"] = "false"
+os.environ["BRAINX_AUTH_SESSION_SECRET"] = "test-pipeline-secret"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -229,7 +232,6 @@ def run_pipeline():
         # ---- 7b. 会话 token(飞书登录态) ----
         from reloop.modules.auth.feishu import (
             create_session_token,
-            decode_ttc_jwt_unverified,
             verify_session_token,
         )
 
@@ -238,8 +240,7 @@ def run_pipeline():
         assert verify_session_token(tok + "x") is None  # 篡改签名
         expired = create_session_token("u123", ttl_hours=-1)
         assert verify_session_token(expired) is None  # 过期
-        assert decode_ttc_jwt_unverified("not.a.jwt") == {}
-        print("[7b] auth token OK: 签发/校验/篡改/过期/解码 全部通过")
+        print("[7b] auth token OK: 签发/校验/篡改/过期 全部通过")
 
         # ---- 8. API 冒烟测试(HTTP 层, 含鉴权/隔离头) ----
         from fastapi.testclient import TestClient

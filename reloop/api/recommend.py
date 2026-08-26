@@ -14,7 +14,7 @@
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, owner_user_id
@@ -40,7 +40,10 @@ def compute(
     每个条目含 talent_id/name/score/score_breakdown(activity+match)/contact_reason 等。
     phase=preview 时 top_n 为快速初筛(无 LLM 匹配), 前端应轮询 /recommend/result 更新。
     """
-    return recommend_engine.compute(db, owner, position_name, sort_by=sort_by, w_activity=w_activity, w_match=w_match, force=force)
+    result = recommend_engine.compute(db, owner, position_name, sort_by=sort_by, w_activity=w_activity, w_match=w_match, force=force)
+    if "error" in result:
+        raise HTTPException(status_code=400, detail=result["message"])
+    return result
 
 
 @router.get("/result", summary="轮询推荐结果(后台精算完成后返回最终结果)")
@@ -53,7 +56,10 @@ def result(
     owner: str = Depends(owner_user_id),
 ):
     """返回 {status: done|running|failed|idle, sort_by, ...结果字段}。status=done 时含完整结果。"""
-    return recommend_engine.result_of(db, owner, position_name, sort_by=sort_by, w_activity=w_activity, w_match=w_match)
+    res = recommend_engine.result_of(db, owner, position_name, sort_by=sort_by, w_activity=w_activity, w_match=w_match)
+    if "error" in res:
+        raise HTTPException(status_code=400, detail=res["message"])
+    return res
 
 
 @router.get("/latest", summary="查看最近一次运行的推荐结果")

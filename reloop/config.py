@@ -50,10 +50,11 @@ class Settings(BaseSettings):
     webapp_dir: str = ""           # 留空=自动取项目根目录下的 webapp/; 也可填绝对路径覆盖
 
     # ---------- RDS MySQL (唯一数据库) ----------
+    # 安全: 凭据无默认值, 必须经环境变量/.env 注入, 禁止写进代码仓库。
     mysql_host: str = "127.0.0.1"
     mysql_port: int = 3306
-    mysql_user: str = "hayden"
-    mysql_password: str = "Haydenmia2026"
+    mysql_user: str = ""
+    mysql_password: str = ""
     mysql_database: str = "reloop"
     mysql_pool_size: int = 10
     mysql_charset: str = "utf8mb4"
@@ -110,12 +111,34 @@ class Settings(BaseSettings):
     # ---------- 派生 ----------
     @property
     def auth_secret(self) -> str:
-        """登录态签名密钥: 显式配置 > 飞书 App Secret > 开发兜底。"""
+        """登录态签名密钥: 显式配置 > 飞书 App Secret。
+
+        强制登录(auth_require_token=True, 生产默认)下未配置密钥直接报错——
+        历史上兜底固定串意味着任何人可伪造任意用户的 X-Auth-Token。
+        仅开发降级(auth_require_token=False)允许用固定兜底串。
+        """
         if self.auth_session_secret:
             return self.auth_session_secret
         if self.feishu_app_secret:
             return self.feishu_app_secret
+        if self.auth_require_token:
+            raise RuntimeError(
+                "BRAINX_AUTH_REQUIRE_TOKEN=true 时必须配置 "
+                "BRAINX_AUTH_SESSION_SECRET 或 BRAINX_FEISHU_APP_SECRET; "
+                "拒绝使用公开兜底串签发登录态"
+            )
         return "reloop-dev-secret"
+
+    def validate_security(self) -> None:
+        """启动期安全自检: 强制登录必须有签名密钥; 走 MySQL 必须有完整凭据。"""
+        if self.auth_require_token:
+            # 触发 auth_secret 的强制校验
+            _ = self.auth_secret
+        if not self.database_url and not (self.mysql_user and self.mysql_password):
+            raise RuntimeError(
+                "未配置数据库: 请设置 BRAINX_DATABASE_URL, 或 "
+                "BRAINX_MYSQL_USER / BRAINX_MYSQL_PASSWORD"
+            )
 
     @property
     def feishu_enabled(self) -> bool:

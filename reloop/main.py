@@ -23,7 +23,8 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """建表(开发期自动; 生产走 sql/schema.sql)。"""
+    """建表(开发期自动; 生产走 sql/schema.sql)。启动前先过安全自检。"""
+    settings.validate_security()  # 缺密钥/缺数据库凭据 -> 启动即失败, 不带病上线
     try:
         init_db()
         logger.info("[startup] DB tables ready")

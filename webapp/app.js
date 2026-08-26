@@ -58,20 +58,25 @@ function loading() { view.innerHTML = `<div class="spinner">${t("loading")}…</
 async function renderHome() {
   const seq = ++homeSeq;
   loading();
-  const [positions, reco, followed] = await Promise.all([
-    api.listPositions().catch(() => []),
-    CURRENT_POSITION
-      ? api.recommend(CURRENT_POSITION, SORT_BY,
-          SORT_BY === "custom" ? W_ACTIVITY : undefined,
-          SORT_BY === "custom" ? W_MATCH : undefined).catch(() => ({ top_n: [], phase: "final" }))
-      : Promise.resolve({ top_n: [], phase: "final" }),
-    api.listFollowed().catch(() => []),
-  ]);
-  if (seq !== homeSeq) return;
-  if (!CURRENT_POSITION && positions.length) CURRENT_POSITION = positions[0]?.position_name;
-  renderHomeView(positions, reco, followed);
-  if (reco.computing || reco.phase === "preview") {
-    pollFinalResult(seq, CURRENT_POSITION);
+  try {
+    const [positions, reco, followed] = await Promise.all([
+      api.listPositions().catch(() => []),
+      CURRENT_POSITION
+        ? api.recommend(CURRENT_POSITION, SORT_BY,
+            SORT_BY === "custom" ? W_ACTIVITY : undefined,
+            SORT_BY === "custom" ? W_MATCH : undefined).catch(() => ({ top_n: [], phase: "final" }))
+        : Promise.resolve({ top_n: [], phase: "final" }),
+      api.listFollowed().catch(() => []),
+    ]);
+    if (seq !== homeSeq) return;
+    if (!CURRENT_POSITION && positions.length) CURRENT_POSITION = positions[0]?.position_name;
+    renderHomeView(positions, reco, followed);
+    if (reco.computing || reco.phase === "preview") {
+      pollFinalResult(seq, CURRENT_POSITION);
+    }
+  } catch (e) {
+    if (seq !== homeSeq) return;
+    view.innerHTML = `<div class="empty">${esc(e.message || t("loading") + "失败")}</div>`;
   }
 }
 
@@ -234,8 +239,9 @@ function wireRows() {
 // ============ Talents / 人才库 ============
 async function renderTalents(keyword = "") {
   loading();
-  const list = await api.listTalents(keyword);
-  const rows = list.length ? list.map((tp) => {
+  try {
+    const list = await api.listTalents(keyword);
+    const rows = list.length ? list.map((tp) => {
     const isFollowed = (tp.tags || []).includes("已关注");
     return `<div class="titem" data-id="${tp.id}">
       <div><div class="name-line"><span class="name">${esc(tp.name)}${isFollowed ? ' <span class="fav-star">★</span>' : ""}</span><span class="base">${esc(tp.base_location || "")}</span></div>
@@ -245,14 +251,17 @@ async function renderTalents(keyword = "") {
     </div>`;
   }).join("") : `<div class="empty">—</div>`;
 
-  view.innerHTML = `
+    view.innerHTML = `
     <header class="mast"><div><div class="kicker">${t("kicker")}</div><h1>${t("talent_pool")}</h1></div></header>
     <div class="searchbar"><div class="field"><input id="kw" placeholder="${t("search_ph")}" value="${esc(keyword)}"></div><button class="btn blue" id="searchBtn">${t("search_btn")}</button></div>
     <div class="tlist">${rows}</div>`;
 
-  view.querySelector("#searchBtn").addEventListener("click", () => renderTalents(view.querySelector("#kw").value.trim()));
-  view.querySelector("#kw").addEventListener("keydown", (e) => { if (e.key === "Enter") renderTalents(e.target.value.trim()); });
-  view.querySelectorAll(".titem").forEach((el) => el.addEventListener("click", () => { location.hash = `#/talent/${el.dataset.id}`; }));
+    view.querySelector("#searchBtn").addEventListener("click", () => renderTalents(view.querySelector("#kw").value.trim()));
+    view.querySelector("#kw").addEventListener("keydown", (e) => { if (e.key === "Enter") renderTalents(e.target.value.trim()); });
+    view.querySelectorAll(".titem").forEach((el) => el.addEventListener("click", () => { location.hash = `#/talent/${el.dataset.id}`; }));
+  } catch (e) {
+    view.innerHTML = `<div class="empty">${esc(e.message || t("loading") + "失败")}</div>`;
+  }
 }
 
 // ============ 特别关注人选 ============
