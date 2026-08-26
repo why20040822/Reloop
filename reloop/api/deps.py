@@ -92,3 +92,32 @@ def get_optional_user(
 def owner_user_id(user: User = Depends(get_current_user)) -> str:
     """便捷依赖: 直接返回隔离键。"""
     return user.user_id
+
+
+def require_authenticated_non_guest_user(
+    db: Session = Depends(get_db),
+    x_auth_token: Optional[str] = Header(default=None, alias="X-Auth-Token"),
+) -> User:
+    """Require an existing signed-in user without guest or development fallbacks.
+
+    Parse previews may submit sensitive raw JD text. This dependency intentionally
+    performs no registration or guest provisioning and ignores X-Owner-User-Id.
+    """
+    if not x_auth_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="需要有效登录态",
+        )
+    user_id = verify_session_token(x_auth_token)
+    if not user_id or user_id == settings.guest_owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录态无效或已过期, 请重新扫码登录",
+        )
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if user is None or user.user_id == settings.guest_owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录态无效或已过期, 请重新扫码登录",
+        )
+    return user

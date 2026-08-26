@@ -22,6 +22,45 @@ class JDAnalysis(BaseModel):
     reporting_line: str = Field(min_length=1)
     language_requirements: list[str] = Field(min_length=1)
 
+    @field_validator(
+        "title",
+        "summary",
+        "experience",
+        "education",
+        "location",
+        "salary_range",
+        "team_size",
+        "reporting_line",
+    )
+    @classmethod
+    def normalize_scalar_text(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("字段不能为空")
+        return cleaned
+
+    @field_validator(
+        "responsibilities",
+        "required_skills",
+        "preferred_skills",
+        "industry_keywords",
+        "language_requirements",
+    )
+    @classmethod
+    def normalize_list_text(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for value in values:
+            cleaned = value.strip()
+            if not cleaned:
+                raise ValueError("列表项不能为空")
+            if cleaned not in seen:
+                seen.add(cleaned)
+                normalized.append(cleaned)
+        if not normalized:
+            raise ValueError("列表不能为空")
+        return normalized
+
 
 class JDParseRequest(BaseModel):
     """A bounded raw JD submitted for parse preview only."""

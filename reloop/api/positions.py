@@ -3,8 +3,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from reloop.api.deps import get_db, owner_user_id
-from reloop.db.models import Position
+from reloop.api.deps import get_db, owner_user_id, require_authenticated_non_guest_user
+from reloop.db.models import Position, User
 from reloop.modules.positions.jd_parser import (
     DeepSeekJDParser,
     JDParserError,
@@ -20,10 +20,10 @@ router = APIRouter(prefix="/positions", tags=["岗位设定"])
 @router.post("/parse-jd", response_model=JDAnalysis, summary="解析 JD（不保存岗位）")
 def parse_jd(
     body: JDParseRequest,
-    owner: str = Depends(owner_user_id),
+    user: User = Depends(require_authenticated_non_guest_user),
 ):
     """Preview a structured JD; persistence remains the explicit POST /positions action."""
-    del owner  # Enforce the same authenticated boundary as position persistence.
+    del user  # Enforce a strict authenticated boundary without a write side effect.
     try:
         return DeepSeekJDParser().parse(body.jd_text)
     except JDParserUnavailable as exc:

@@ -26,7 +26,8 @@ def build_jd_messages(jd_text: str) -> list[dict[str, str]]:
                 "你是招聘岗位分析助手。仅返回 JSON 对象，且必须包含 title、summary、"
                 "responsibilities、required_skills、preferred_skills、experience、education、"
                 "location、industry_keywords、salary_range、team_size、reporting_line、"
-                "language_requirements。所有列表字段必须是非空字符串数组。"
+                "language_requirements。无法从 JD 得知的标量字段使用“未提供”，"
+                "列表字段使用 [“未提供”]。所有列表字段必须是非空字符串数组。"
             ),
         },
         {"role": "user", "content": jd_text},
@@ -71,5 +72,5 @@ class DeepSeekJDParser:
             return JDAnalysis.model_validate(json.loads(content))
         except httpx.TimeoutException as exc:
             raise JDParserError("DeepSeek JD 解析超时，请稍后重试") from exc
-        except (httpx.HTTPError, KeyError, TypeError, ValueError, ValidationError) as exc:
+        except (httpx.HTTPError, IndexError, KeyError, TypeError, ValueError, ValidationError) as exc:
             raise JDParserError("DeepSeek 未返回有效的 JD 结构") from exc
