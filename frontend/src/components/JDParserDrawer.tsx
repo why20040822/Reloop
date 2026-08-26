@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
+import { cycleFocus, restoreFocus } from "../lib/drawerFocus";
 import { analysisToDraft, draftToAnalysis, type JDAnalysisDraft } from "../lib/jd";
 import type { JDAnalysis } from "../lib/api";
 
@@ -16,6 +17,8 @@ type Props = {
   onConfirm: (analysis: JDAnalysis) => void;
   onReset: () => void;
   onClose: () => void;
+  returnFocusTarget: HTMLElement | null;
+  returnFocusFallback: HTMLElement | null;
 };
 
 const fields: Array<{ key: keyof JDAnalysis; label: string; multiline?: boolean }> = [
@@ -34,16 +37,30 @@ const fields: Array<{ key: keyof JDAnalysis; label: string; multiline?: boolean 
   { key: "language_requirements", label: "语言要求", multiline: true },
 ];
 
-export function JDParserDrawer({ open, rawJd, status, analysis, error, onRawJdChange, onParse, onConfirm, onReset, onClose }: Props) {
-  const previousFocus = useRef<HTMLElement | null>(null);
+function focusableElements(container: HTMLElement | null) {
+  if (!container) return [];
+  return Array.from(container.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")).filter((element) => !element.hasAttribute("hidden"));
+}
+
+export function JDParserDrawer({ open, rawJd, status, analysis, error, onRawJdChange, onParse, onConfirm, onReset, onClose, returnFocusTarget, returnFocusFallback }: Props) {
+  const drawerRef = useRef<HTMLElement | null>(null);
+  const wasOpen = useRef(false);
   const [draft, setDraft] = useState<JDAnalysisDraft | null>(null);
   const busy = status === "parsing" || status === "saving";
   const reviewing = status === "review" || status === "saving";
 
   useEffect(() => {
-    if (open) previousFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    else previousFocus.current?.focus();
-  }, [open]);
+    if (open) {
+      wasOpen.current = true;
+      queueMicrotask(() => {
+        const initialFocus = drawerRef.current?.querySelector<HTMLElement>("[data-jd-initial-focus]:not([disabled])");
+        (initialFocus || focusableElements(drawerRef.current)[0] || drawerRef.current)?.focus();
+      });
+    } else if (wasOpen.current) {
+      wasOpen.current = false;
+      restoreFocus(returnFocusTarget, returnFocusFallback);
+    }
+  }, [open, returnFocusFallback, returnFocusTarget, status]);
 
   useEffect(() => {
     if (analysis) setDraft(analysisToDraft(analysis));
@@ -52,7 +69,22 @@ export function JDParserDrawer({ open, rawJd, status, analysis, error, onRawJdCh
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && !busy) onClose();
+      if (event.key === "Escape" && !busy) { onClose(); return; }
+      if (event.key !== "Tab") return;
+      const targets = focusableElements(drawerRef.current);
+      if (!targets.length) {
+        event.preventDefault();
+        drawerRef.current?.focus();
+        return;
+      }
+      const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const isOutsideDrawer = !drawerRef.current?.contains(active);
+      const isWrappingForward = !event.shiftKey && (isOutsideDrawer || active === targets[targets.length - 1]);
+      const isWrappingBackward = event.shiftKey && (isOutsideDrawer || active === targets[0]);
+      if (isWrappingForward || isWrappingBackward) {
+        event.preventDefault();
+        cycleFocus(targets, active, event.shiftKey);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -65,12 +97,12 @@ export function JDParserDrawer({ open, rawJd, status, analysis, error, onRawJdCh
 
   return <div className="jd-drawer-layer">
     <button className="jd-drawer-backdrop" type="button" aria-label="关闭 JD 解析" onClick={close} disabled={busy} />
-    <aside className="jd-drawer" role="dialog" aria-modal="true" aria-labelledby="jd-drawer-title">
+    <aside className="jd-drawer" ref={drawerRef} role="dialog" aria-modal="true" aria-labelledby="jd-drawer-title" tabIndex={-1}>
       <header className="jd-drawer-header"><div><p>岗位匹配</p><h2 id="jd-drawer-title">解析职位描述</h2></div><button className="icon-button" type="button" aria-label="关闭 JD 解析" onClick={close} disabled={busy}><X size={18} /></button></header>
       <div className="jd-drawer-body">
         {error && <p className="notice error" role="alert">{error}</p>}
-        {!reviewing ? <label className="jd-raw-field">职位描述（JD）<textarea value={rawJd} disabled={busy} onChange={(event) => onRawJdChange(event.target.value)} placeholder="粘贴完整的职责、任职资格、地点与团队信息" autoFocus /><small>系统会生成可编辑的结构化岗位要求。</small></label>
-          : <><div className="jd-review-heading"><div><strong>核对解析结果</strong><small>列表字段每行一项，可直接修改。</small></div><button className="text-button" type="button" onClick={onReset} disabled={busy}>解析新 JD</button></div>{draft && <div className="jd-field-grid">{fields.map(({ key, label, multiline }) => <label key={key}>{label}{multiline ? <textarea value={draft[key]} disabled={busy} onChange={(event) => updateDraft(key, event.target.value)} /> : <input value={draft[key]} disabled={busy} onChange={(event) => updateDraft(key, event.target.value)} />}</label>)}</div>}</>}
+        {!reviewing ? <label className="jd-raw-field">职位描述（JD）<textarea data-jd-initial-focus value={rawJd} disabled={busy} onChange={(event) => onRawJdChange(event.target.value)} placeholder="粘贴完整的职责、任职资格、地点与团队信息" /><small>系统会生成可编辑的结构化岗位要求。</small></label>
+          : <><div className="jd-review-heading"><div><strong>核对解析结果</strong><small>列表字段每行一项，可直接修改。</small></div><button className="text-button" type="button" onClick={onReset} disabled={busy}>解析新 JD</button></div>{draft && <div className="jd-field-grid">{fields.map(({ key, label, multiline }, index) => <label key={key}>{label}{multiline ? <textarea data-jd-initial-focus={index === 0 ? true : undefined} value={draft[key]} disabled={busy} onChange={(event) => updateDraft(key, event.target.value)} /> : <input data-jd-initial-focus={index === 0 ? true : undefined} value={draft[key]} disabled={busy} onChange={(event) => updateDraft(key, event.target.value)} />}</label>)}</div>}</>}
       </div>
       <footer className="jd-drawer-footer">{reviewing ? <><button className="secondary-button" type="button" onClick={close} disabled={busy}>取消</button><button className="primary-button" type="button" disabled={busy || !draft} onClick={() => draft && onConfirm(draftToAnalysis(draft))}>{status === "saving" ? "正在保存…" : "确认并开始匹配"}</button></> : <><button className="secondary-button" type="button" onClick={close} disabled={busy}>取消</button><button className="primary-button" type="button" disabled={busy || !rawJd.trim()} onClick={onParse}>{status === "parsing" ? "正在解析…" : "解析 JD"}</button></>}</footer>
     </aside>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUpRight, BriefcaseBusiness, ChevronDown, ChevronRight, CircleHelp, Database, Heart, House,
@@ -8,6 +8,7 @@ import { DirectGlassSegment } from "./components/DirectGlassSegment";
 import { JDParserDrawer, type JDParserDrawerStatus } from "./components/JDParserDrawer";
 import { api, AUTH_CHANGE_EVENT, config, type CurrentUser, type Interaction, type JDAnalysis, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
 import { positionHasParsedJd } from "./lib/jd";
+import { saveThenRefreshPosition } from "./lib/positionSave";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./lib/sidebar";
 import { scrubTtcCallbackHash } from "./lib/ttcCallback";
 
@@ -187,6 +188,10 @@ function Dashboard() {
   const [drawerRawJd, setDrawerRawJd] = useState("");
   const [drawerAnalysis, setDrawerAnalysis] = useState<JDAnalysis | null>(null);
   const [drawerError, setDrawerError] = useState("");
+  const [refreshWarning, setRefreshWarning] = useState("");
+  const matchSegmentRef = useRef<HTMLDivElement | null>(null);
+  const drawerReturnTarget = useRef<HTMLElement | null>(null);
+  const drawerReturnFallback = useRef<HTMLElement | null>(null);
 
   useEffect(() => { void (async () => { try { const [people, roles] = await Promise.all([api.listTalents(), api.listPositions()]); setTalents(people); setPositions(roles); setSelectedPosition((value) => value || roles[0]?.position_name || ""); } catch (reason) { setError(errorMessage(reason)); } finally { setLoading(false); } })(); }, []);
   useEffect(() => {
@@ -215,10 +220,13 @@ function Dashboard() {
   }, [mode, selectedPosition]);
 
   const selected = positions.find((position) => position.position_name === selectedPosition);
-  const openParser = (position?: Position) => {
+  const openParser = (position?: Position, opener?: HTMLElement | null) => {
+    drawerReturnTarget.current = opener || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    drawerReturnFallback.current = matchSegmentRef.current?.querySelector<HTMLElement>("[data-segment-value='match']") || null;
     setDrawerRawJd(position?.jd_text || "");
     setDrawerAnalysis(null);
     setDrawerError("");
+    setRefreshWarning("");
     setDrawerStatus("input");
     setDrawerOpen(true);
   };
@@ -237,10 +245,13 @@ function Dashboard() {
     setDrawerStatus("saving");
     setDrawerError("");
     try {
-      const saved = await api.setPosition({ position_name: selected?.position_name || analysis.title, jd_text: drawerRawJd, jd_analysis: analysis });
-      const roles = await api.listPositions();
-      setPositions(roles);
-      setSelectedPosition(saved.position_name);
+      const result = await saveThenRefreshPosition(
+        () => api.setPosition({ position_name: selected?.position_name || analysis.title, jd_text: drawerRawJd, jd_analysis: analysis }),
+        () => api.listPositions(),
+      );
+      setPositions(result.positions || [result.position, ...positions.filter((position) => position.position_name !== result.position.position_name)]);
+      setSelectedPosition(result.position.position_name);
+      setRefreshWarning(result.refreshError ? "岗位已保存，但岗位列表未能刷新。已使用刚保存的岗位继续匹配。" : "");
       setDrawerOpen(false);
       setMode("match");
     } catch (reason) {
@@ -254,14 +265,15 @@ function Dashboard() {
     : [...talents].sort((a, b) => (b.last_active_at || "").localeCompare(a.last_active_at || "")).map((talent) => ({ talent, score: talent.value_score, reason: talent.last_active_at ? `最近 ${relativeActivity(talent.last_active_at)} 有活跃信号` : "已进入人才库，建议查看完整资料。" })), [matches, mode, talents]);
 
   return <><div className="dashboard-page">
-    <PageHeading title="今天最该联系谁" action={<DirectGlassSegment value={mode} options={[{ value: "activity", label: "活跃优先" }, { value: "match", label: "岗位匹配" }]} onChange={(value) => { const nextMode = value as DashboardMode; if (nextMode === "match" && !positionHasParsedJd(selected)) { openParser(selected); return; } setMode(nextMode); }} ariaLabel="选择人才展示方式" />} />
-    {mode === "match" && <div className="match-controls"><label className="position-picker">当前岗位<span className="position-select"><select value={selectedPosition} disabled={positions.length === 0} onChange={(event) => { const nextPosition = positions.find((position) => position.position_name === event.target.value); setSelectedPosition(event.target.value); if (!positionHasParsedJd(nextPosition)) { setMode("activity"); openParser(nextPosition); } }}>{positions.length === 0 && <option value="">暂无岗位</option>}{positions.map((position) => <option key={position.id} value={position.position_name}>{position.position_name}</option>)}</select><ChevronDown size={15} aria-hidden="true" /></span></label><button className="secondary-button" type="button" onClick={() => openParser(selected)}>解析新 JD</button></div>}
+    <PageHeading title="今天最该联系谁" action={<DirectGlassSegment containerRef={matchSegmentRef} value={mode} options={[{ value: "activity", label: "活跃优先" }, { value: "match", label: "岗位匹配" }]} onChange={(value) => { const nextMode = value as DashboardMode; if (nextMode === "match" && !positionHasParsedJd(selected)) { openParser(selected); return; } setMode(nextMode); }} ariaLabel="选择人才展示方式" />} />
+    {mode === "match" && <div className="match-controls"><label className="position-picker">当前岗位<span className="position-select"><select value={selectedPosition} disabled={positions.length === 0} onChange={(event) => { const nextPosition = positions.find((position) => position.position_name === event.target.value); if (!positionHasParsedJd(nextPosition)) { openParser(nextPosition, event.currentTarget); setSelectedPosition(event.target.value); setMode("activity"); return; } setSelectedPosition(event.target.value); }}>{positions.length === 0 && <option value="">暂无岗位</option>}{positions.map((position) => <option key={position.id} value={position.position_name}>{position.position_name}</option>)}</select><ChevronDown size={15} aria-hidden="true" /></span></label><button className="secondary-button" type="button" onClick={(event) => openParser(selected, event.currentTarget)}>解析新 JD</button></div>}
     {error && <Notice tone="error">{error}</Notice>}
+    {refreshWarning && <Notice tone="info">{refreshWarning}</Notice>}
     <button className="talent-summary" type="button" onClick={() => navigate("/talents")}><span><small>{mode === "match" ? "岗位匹配候选" : "近 7 天活跃人才"}</small><strong>{rows.length}</strong></span><span>前往人才库 <ArrowUpRight size={16} /></span></button>
     <section className="talent-focus"><div className="section-heading"><h2>{mode === "match" ? `${selectedPosition || "岗位"}匹配人才` : "最近活跃人才"}</h2><button className="text-button" onClick={() => navigate("/talents")}>查看全部 <ChevronRight size={15} /></button></div>
       {loading ? <Loading /> : rows.length === 0 ? <Empty text="暂时没有可展示的人才。" /> : <div className="focus-list">{rows.map((row, index) => <button type="button" className="focus-row" key={row.talent.id} onClick={() => navigate(`/talent/${row.talent.id}`)}><span className="rank">{String(index + 1).padStart(2, "0")}</span><Avatar person={row.talent} size="large" /><span className="focus-person"><strong>{row.talent.name}</strong><small>{row.talent.company || "—"} · {row.talent.position || "—"}</small></span><span className="focus-reason">{row.reason}</span><span className="focus-score"><strong>{row.score == null ? "—" : Math.round(row.score * 100)}</strong><small>{mode === "match" ? "匹配分" : "价值分"}</small></span><ChevronRight size={16} /></button>)}</div>}
     </section>
-  </div><JDParserDrawer open={drawerOpen} rawJd={drawerRawJd} status={drawerStatus} analysis={drawerAnalysis} error={drawerError} onRawJdChange={(value) => { setDrawerRawJd(value); setDrawerError(""); }} onParse={() => void parseJd()} onConfirm={(analysis) => void confirmJd(analysis)} onReset={() => { setDrawerStatus("input"); setDrawerAnalysis(null); setDrawerError(""); }} onClose={() => setDrawerOpen(false)} /></>;
+  </div><JDParserDrawer open={drawerOpen} rawJd={drawerRawJd} status={drawerStatus} analysis={drawerAnalysis} error={drawerError} returnFocusTarget={drawerReturnTarget.current} returnFocusFallback={drawerReturnFallback.current} onRawJdChange={(value) => { setDrawerRawJd(value); setDrawerError(""); }} onParse={() => void parseJd()} onConfirm={(analysis) => void confirmJd(analysis)} onReset={() => { setDrawerStatus("input"); setDrawerAnalysis(null); setDrawerError(""); }} onClose={() => setDrawerOpen(false)} /></>;
 }
 
 function TalentList() {
