@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from reloop.config import settings
@@ -17,6 +18,21 @@ from reloop.db.models import User
 from reloop.modules.auth.feishu import verify_session_token
 
 logger = logging.getLogger(__name__)
+
+
+def _create_user_or_get_concurrent_winner(db: Session, user_id: str, display_name: str | None = None) -> User:
+    user = User(user_id=user_id, display_name=display_name)
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        winner = db.query(User).filter(User.user_id == user_id).first()
+        if winner is None:
+            raise
+        return winner
+    db.refresh(user)
+    return user
 
 
 def get_current_user(
@@ -47,10 +63,7 @@ def get_current_user(
     if settings.auth_allow_guest:
         user = db.query(User).filter(User.user_id == settings.guest_owner_id).first()
         if user is None:
-            user = User(user_id=settings.guest_owner_id, display_name="访客")
-            db.add(user)
-            db.commit()
-            db.refresh(user)
+            user = _create_user_or_get_concurrent_winner(db, settings.guest_owner_id, "访客")
         return user
 
     # 3. 开发期 fallback: X-Owner-User-Id
@@ -66,10 +79,7 @@ def get_current_user(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="用户未注册(auth_auto_register=False)",
             )
-        user = User(user_id=x_owner_user_id)
-        db.add(user)
-        db.commit()
-        db.refresh(user)
+        user = _create_user_or_get_concurrent_winner(db, x_owner_user_id)
         logger.info("[auth] auto-registered user=%s", x_owner_user_id)
     return user
 

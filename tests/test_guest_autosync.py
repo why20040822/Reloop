@@ -3,7 +3,9 @@
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import IntegrityError
 
+from reloop.api.deps import get_current_user
 from reloop.config import settings
 from reloop.db.engine import SessionLocal, init_db
 from reloop.db.models import TalentProfile, User
@@ -19,6 +21,37 @@ def _empty_guest_pool():
         db.commit()
     finally:
         db.close()
+
+
+def test_concurrent_guest_creation_recovers_the_user_created_by_another_request(monkeypatch):
+    monkeypatch.setattr(settings, "auth_allow_guest", True)
+    _empty_guest_pool()
+    db = SessionLocal()
+    original_commit = db.commit
+    raced = False
+
+    def commit_after_other_request_wins():
+        nonlocal raced
+        if raced:
+            return original_commit()
+        raced = True
+        db.rollback()
+        winner = SessionLocal()
+        try:
+            winner.add(User(user_id=settings.guest_owner_id, display_name="访客"))
+            winner.commit()
+        finally:
+            winner.close()
+        raise IntegrityError("INSERT INTO users", {}, Exception("duplicate guest"))
+
+    monkeypatch.setattr(db, "commit", commit_after_other_request_wins)
+    try:
+        user = get_current_user(db=db, x_owner_user_id=None, x_auth_token=None)
+    finally:
+        db.close()
+
+    assert user.user_id == settings.guest_owner_id
+    assert user.display_name == "访客"
 
 
 def test_manual_guest_sync_rejects_legacy_token_only_configuration(monkeypatch):
