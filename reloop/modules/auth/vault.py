@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import json
 import logging
+import base64
+import hashlib
 from pathlib import Path
 from typing import Optional
 
@@ -40,6 +42,35 @@ def _get_cipher() -> Optional[Fernet]:
             "用 `python -c \"from cryptography.fernet import Fernet; "
             "print(Fernet.generate_key().decode())\"` 生成。"
         ) from e
+
+
+def _credential_cipher() -> Fernet:
+    """Encrypt database-bound TTC tokens even without a separate vault key."""
+    explicit = _get_cipher()
+    if explicit is not None:
+        return explicit
+    key = base64.urlsafe_b64encode(hashlib.sha256(settings.auth_secret.encode("utf-8")).digest())
+    return Fernet(key)
+
+
+def seal_user_token(token: str) -> str:
+    """Return a versioned encrypted value for a user-owned TTC token."""
+    if not token:
+        return ""
+    return "v1:" + _credential_cipher().encrypt(token.encode("utf-8")).decode("utf-8")
+
+
+def unseal_user_token(value: str | None) -> str:
+    """Read a user-owned token, supporting legacy plaintext during migration."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if not raw.startswith("v1:"):
+        return raw
+    try:
+        return _credential_cipher().decrypt(raw[3:].encode("utf-8")).decode("utf-8")
+    except InvalidToken as e:
+        raise VaultError("已保存的人才库登录态无法解密，请重新登录飞书") from e
 
 
 def _vault_path() -> Path:

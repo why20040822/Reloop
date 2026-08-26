@@ -31,7 +31,8 @@ Reloop/
 │   │   └── sync/              # TTC 客户端 (client.py) + 归一化 (normalizer.py) + 同步编排
 │   ├── schemas/               # Pydantic 请求/响应 schema
 │   └── utils/                 # 工具 (数据隔离断言等)
-├── webapp/                    # 前端 (原生 JS SPA, hash 路由)
+├── frontend/                  # React/Vite 源码 (Hash Router)
+├── webapp/                    # 构建产物，由 `npm run build:web` 生成
 │   ├── index.html             # 入口 HTML (侧边栏 + 主内容)
 │   ├── app.js                 # 路由 + 视图 (Home/Talents/Detail/Positions/Settings)
 │   ├── styles.css             # 全局样式 (深色/浅色主题)

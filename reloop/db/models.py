@@ -53,13 +53,11 @@ class User(Base):
     # 后期前端接入后可换成登录态/SSO 解析出的用户 ID。
     user_id: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     display_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    # DEPRECATED: TTC 逐用户绑定已于 2026-08 移除, 改服务端全局 Token(BRAINX_TTC_TALENT_AUTH_TOKEN)。
-    # 以下三列保留以兼容旧库, 不再写入; 新同步统一由服务端全局 Token 拉取并按 owner 隔离。
-    # 该用户在 ttcadvisory 人才库对应的 space_id(已弃用)
+    # TTC user identifier returned by the official profile endpoint (display and audit only).
     ttc_space_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
-    # 用户绑定的 TTC 网关登录 Token(已弃用, 不再由用户粘贴)
+    # User-owned TTC token, encrypted at rest and never returned by the API.
     ttc_auth_token: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # TTC Token 解析出的身份(展示用, 已弃用)
+    # TTC profile display name.
     ttc_bound_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     last_sync_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)
     last_sync_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

@@ -16,6 +16,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from typing import Optional
 
 import httpx
@@ -33,8 +34,16 @@ _SYNC_PROGRESS: dict[str, dict] = {}
 _SYNC_LOCK = threading.Lock()
 
 
+class TTCAuthRequired(RuntimeError):
+    """TTC API requires a valid service or user authentication token."""
+
+
+class TTCFetchError(RuntimeError):
+    """TTC API returned a non-authentication failure."""
+
+
 def _make_sync_id(owner: str) -> str:
-    return f"{owner}:{int(time.time())}"
+    return f"{owner}:{uuid.uuid4().hex}"
 
 
 def get_sync_progress(sync_id: str) -> dict:
@@ -59,13 +68,14 @@ class TTCClient:
     """TTC 私域人才库数据源客户端。"""
 
     def __init__(self) -> None:
-        self.base_url = settings.ttc_talent_base_url
+        self.base_url = settings.ttc_talent_api_base_url
         self.default_space_id = settings.ttc_talent_space_id
-        self.auth_token = settings.ttc_talent_auth_token
+        self.auth_token = settings.ttc_shared_auth_token or settings.ttc_talent_auth_token
         self.api_path = settings.ttc_talent_api_path
 
     def fetch_talents(self, space_id: Optional[str] = None,
                       auth_token: Optional[str] = None,
+                      source: str = "owned",
                       progress_callback=None) -> list[dict]:
         """从站点接口拉取人才列表 -> 标准结构化格式列表。
 
@@ -73,16 +83,23 @@ class TTCClient:
         """
         token = auth_token or self.auth_token
         if not token:
-            logger.info("[ttc] 未配置 auth token, 跳过接口拉取")
-            return []
+            raise TTCAuthRequired("TTC 人才库需要有效登录态；请先登录飞书或配置共享库只读凭据")
+        if source not in {"owned", "shared"}:
+            raise ValueError(f"未知 TTC 数据源: {source}")
         space_id = space_id or self.default_space_id
+        if source == "shared" and not space_id:
+            raise TTCFetchError("共享人才库缺少空间 ID")
         base_path = self.api_path.rstrip("/")
         page, page_size = 1, 100
         all_items: list[dict] = []
         total = None
         try:
             while True:
-                url = f"{self.base_url}{base_path}/{space_id}/talents"
+                url = (
+                    f"{self.base_url}{base_path}/all-talents/{space_id}/talents"
+                    if source == "shared"
+                    else f"{self.base_url}{base_path}/talents"
+                )
                 resp = self._request_with_retry(
                     url,
                     params={"page": page, "page_size": page_size},
@@ -91,12 +108,12 @@ class TTCClient:
                         "Authorization": f"Bearer {token}",
                     },
                 )
+                if resp.status_code in {401, 403}:
+                    raise TTCAuthRequired("TTC 登录态已失效，请重新登录飞书")
                 if resp.status_code != 200:
-                    body_preview = resp.text[:500] if resp.text else ""
-                    logger.warning("[ttc] page=%s status=%s url=%s body=%s", page, resp.status_code, url, body_preview)
-                    break
+                    raise TTCFetchError(f"TTC 人才库请求失败（HTTP {resp.status_code}）")
                 resp_json = resp.json() or {}
-                data = resp_json.get("data") or {}
+                data = resp_json.get("data") or resp_json
                 # 兼容多种响应格式
                 items = (
                     data.get("list")
@@ -121,9 +138,11 @@ class TTCClient:
                     break
                 page += 1
             return normalize_batch(all_items)
+        except (TTCAuthRequired, TTCFetchError):
+            raise
         except Exception as e:  # noqa: BLE001
             logger.warning("[ttc] fetch error: %s", e)
-            return []
+            raise TTCFetchError("TTC 人才库网络请求失败") from e
 
     def _request_with_retry(self, url, params=None, headers=None, max_retries=3):
         """带重试和指数退避的 HTTP GET 请求。"""
@@ -163,6 +182,7 @@ class TalentSyncService:
         raw_payload=None,
         space_id: Optional[str] = None,
         auth_token: Optional[str] = None,
+        source: str = "owned",
         db=None,
         progress_callback=None,
     ) -> int:
@@ -177,7 +197,7 @@ class TalentSyncService:
             talents = self.client.ingest_talents(raw_payload)
         else:
             talents = self.client.fetch_talents(
-                space_id, auth_token=auth_token,
+                space_id, auth_token=auth_token, source=source,
                 progress_callback=lambda t, c: progress_callback and progress_callback(c, t)
             )
         if not talents:
@@ -247,8 +267,9 @@ class TalentSyncService:
                     _update_progress(sync_id, current=current, total=total,
                                      status="running", message=f"同步中 ({current}/{total})…")
                 count = self.sync_for_user(owner_user_id, progress_callback=prog, **kwargs)
+                current = get_sync_progress(sync_id).get("current", 0)
                 _update_progress(sync_id, status="done", message=f"同步完成: {count} 人",
-                                 current=_SYNC_PROGRESS.get(sync_id, {}).get("total", count))
+                                 current=max(current, count), synced=count)
             except Exception as e:  # noqa: BLE001
                 logger.exception("[sync] async failed owner=%s", owner_user_id)
                 _update_progress(sync_id, status="failed", message=str(e)[:200])

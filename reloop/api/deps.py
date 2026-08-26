@@ -38,14 +38,10 @@ def get_current_user(
             user = db.query(User).filter(User.user_id == user_id).first()
             if user is not None:
                 return user
-        # Token 无效/过期/用户不存在: 如果允许访客则静默回退，避免前端闪退
-        if settings.auth_allow_guest:
-            logger.info("[auth] token invalid/expired, falling back to guest")
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="登录态无效或已过期, 请重新扫码登录",
-            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录态无效或已过期, 请重新扫码登录",
+        )
 
     # 2. 无登录态: 先看是否允许访客
     if settings.auth_allow_guest:
