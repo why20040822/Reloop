@@ -155,6 +155,9 @@ class Position(Base):
     position_name: Mapped[str] = mapped_column(String(128), nullable=False)
     # JD 文本 (可选; 为空则只用岗位名做匹配)
     jd_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    # 解析后的结构化 JD；原始 jd_text 仍是推荐缓存和匹配的输入。
+    jd_analysis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    jd_analysis_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     jd_embedding: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(Integer, default=1)  # 1=生效
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)

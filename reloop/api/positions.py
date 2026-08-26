@@ -5,10 +5,31 @@ from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, owner_user_id
 from reloop.db.models import Position
+from reloop.modules.positions.jd_parser import (
+    DeepSeekJDParser,
+    JDParserError,
+    JDParserUnavailable,
+)
 from reloop.modules.profile.llm import llm_service
+from reloop.schemas.jd import JDAnalysis, JDParseRequest
 from reloop.schemas.talent import PositionCreate, PositionOut
 
 router = APIRouter(prefix="/positions", tags=["岗位设定"])
+
+
+@router.post("/parse-jd", response_model=JDAnalysis, summary="解析 JD（不保存岗位）")
+def parse_jd(
+    body: JDParseRequest,
+    owner: str = Depends(owner_user_id),
+):
+    """Preview a structured JD; persistence remains the explicit POST /positions action."""
+    del owner  # Enforce the same authenticated boundary as position persistence.
+    try:
+        return DeepSeekJDParser().parse(body.jd_text)
+    except JDParserUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except JDParserError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.post("", response_model=PositionOut, summary="设定当前招聘岗位(如: HRBP)")
@@ -17,6 +38,7 @@ def set_position(
     db: Session = Depends(get_db),
     owner: str = Depends(owner_user_id),
 ):
+    analysis_data = body.jd_analysis.model_dump(mode="json") if body.jd_analysis else None
     active_count = (
         db.query(Position)
         .filter(Position.owner_user_id == owner, Position.is_active == 1)
@@ -32,7 +54,11 @@ def set_position(
         .order_by(Position.created_at.desc())
         .first()
     )
-    if existing is not None and (existing.jd_text or "") == (body.jd_text or ""):
+    if (
+        existing is not None
+        and (existing.jd_text or "") == (body.jd_text or "")
+        and existing.jd_analysis == analysis_data
+    ):
         return existing
 
     if existing is None and active_count >= 10:
@@ -48,6 +74,8 @@ def set_position(
         owner_user_id=owner,
         position_name=body.position_name,
         jd_text=body.jd_text,
+        jd_analysis=analysis_data,
+        jd_analysis_version="deepseek-v1" if analysis_data else None,
         jd_embedding=emb,
         is_active=1,
     )

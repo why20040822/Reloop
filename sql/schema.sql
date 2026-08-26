@@ -45,6 +45,8 @@ CREATE TABLE IF NOT EXISTS positions (
     owner_user_id VARCHAR(64)  NOT NULL,
     position_name VARCHAR(128) NOT NULL COMMENT '当前招聘岗位',
     jd_text       TEXT         NULL,
+    jd_analysis   JSON         NULL COMMENT 'DeepSeek 解析后的结构化 JD',
+    jd_analysis_version VARCHAR(32) NULL COMMENT '结构化 JD schema/version',
     jd_embedding  JSON         NULL,
     is_active     TINYINT      DEFAULT 1,
     created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP,

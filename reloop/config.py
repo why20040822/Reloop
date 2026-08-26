@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     llm_embedding_model: str = "text-embedding-v3"
     llm_timeout: int = 30
 
+    # ---------- DeepSeek JD 解析 (仅后端使用) ----------
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_timeout_seconds: float = 30
+
     # ---------- 飞书扫码登录 ----------
     # 自建飞书应用凭证(开放平台-凭证与基础信息)。未配置时 /auth/feishu/* 返回未启用。
     feishu_app_id: str = ""
