@@ -62,12 +62,12 @@ def seal_user_token(token: str) -> str:
 
 
 def unseal_user_token(value: str | None) -> str:
-    """Read a user-owned token, supporting legacy plaintext during migration."""
+    """Read a versioned user-owned token and reject unsafe legacy plaintext."""
     raw = (value or "").strip()
     if not raw:
         return ""
     if not raw.startswith("v1:"):
-        return raw
+        raise VaultError("已保存的人才库登录态格式已失效，请重新登录飞书")
     try:
         return _credential_cipher().decrypt(raw[3:].encode("utf-8")).decode("utf-8")
     except InvalidToken as e:

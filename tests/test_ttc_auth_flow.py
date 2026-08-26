@@ -14,7 +14,7 @@ from reloop.db.engine import SessionLocal, init_db
 from reloop.db.models import User
 from reloop.main import app
 from reloop.modules.auth.vault import VaultError, seal_user_token, unseal_user_token
-from reloop.modules.sync.client import TTCClient, get_sync_progress, talent_sync_service
+from reloop.modules.sync.client import TTCAuthRequired, TTCClient, get_sync_progress, talent_sync_service
 
 
 def test_user_token_is_not_saved_in_plaintext(monkeypatch):
@@ -36,6 +36,35 @@ def test_user_token_requires_explicit_vault_key(monkeypatch):
         seal_user_token("must-not-use-the-public-development-secret")
 
 
+def test_legacy_plaintext_user_token_requires_reconnect_and_cannot_sync():
+    init_db()
+    user_id = "fs_legacy_plaintext_ttc_token"
+    plaintext = "legacy-plaintext-token-that-must-not-be-used"
+    db = SessionLocal()
+    try:
+        db.query(User).filter(User.user_id == user_id).delete()
+        db.add(User(user_id=user_id, display_name="旧凭据用户", ttc_auth_token=plaintext))
+        db.commit()
+    finally:
+        db.close()
+
+    with pytest.raises(VaultError, match="重新"):
+        unseal_user_token(plaintext)
+
+    session_token = create_session_token(user_id)
+    with TestClient(app) as client, patch(
+        "reloop.api.sync.talent_sync_service.sync_for_user_async",
+    ) as sync:
+        me_response = client.get("/auth/me", headers={"X-Auth-Token": session_token})
+        sync_response = client.post("/sync/ttc", headers={"X-Auth-Token": session_token})
+
+    assert me_response.status_code == 200, me_response.text
+    assert me_response.json()["ttc_connected"] is False
+    assert sync_response.status_code == 409, sync_response.text
+    assert "重新" in sync_response.json()["detail"]
+    sync.assert_not_called()
+
+
 def test_ttc_client_uses_real_gateway_paths():
     client = TTCClient()
     seen = []
@@ -49,6 +78,22 @@ def test_ttc_client_uses_real_gateway_paths():
     assert seen[0][0].endswith("/api/private-talent/v1/all-talents/space-1/talents")
     assert client.fetch_talents(auth_token="token", source="owned") == []
     assert seen[1][0].endswith("/api/private-talent/v1/talents")
+
+
+@pytest.mark.parametrize(
+    ("shared_token", "legacy_token"),
+    [("shared-service-token", ""), ("", "legacy-token-that-must-not-be-used")],
+)
+def test_owned_ttc_client_requires_explicit_user_token(monkeypatch, shared_token, legacy_token):
+    monkeypatch.setattr(settings, "ttc_shared_auth_token", shared_token)
+    monkeypatch.setattr(settings, "ttc_talent_auth_token", legacy_token)
+    client = TTCClient()
+
+    with patch.object(client, "_request_with_retry") as request:
+        with pytest.raises(TTCAuthRequired):
+            client.fetch_talents(source="owned")
+
+    request.assert_not_called()
 
 
 def test_official_callback_binds_user_and_starts_owned_sync(monkeypatch):

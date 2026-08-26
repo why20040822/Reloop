@@ -2,7 +2,7 @@
 
 > 今天你最应该联系谁,以及为什么。
 
-Reloop 从 TTC 私域人才库拉取人才数据，结构化入库（阿里云 RDS MySQL），通过「活跃度 × 岗位匹配度」双指标为候选人排序，帮助顾问找出最值得优先触达的人。
+Reloop 按访问身份从 TTC 共享池或用户个人库拉取人才数据，结构化入库（阿里云 RDS MySQL），通过「活跃度 × 岗位匹配度」双指标为候选人排序，帮助顾问找出最值得优先触达的人。
 
 ---
 
@@ -33,13 +33,12 @@ Reloop/
 │   └── utils/                 # 工具 (数据隔离断言等)
 ├── frontend/                  # React/Vite 源码 (Hash Router)
 ├── webapp/                    # 构建产物，由 `npm run build:web` 生成
-│   ├── index.html             # 入口 HTML (侧边栏 + 主内容)
-│   ├── app.js                 # 路由 + 视图 (Home/Talents/Detail/Positions/Settings)
-│   ├── styles.css             # 全局样式 (深色/浅色主题)
-│   ├── i18n.js                # 国际化 (zh-CN / en-US)
-│   └── data/
-│       ├── provider.js        # API 客户端 (live/mock 切换, 前端缓存)
-│       └── mock.js            # 样本数据 (离线演示)
+│   ├── index.html             # Vite 入口，引用带内容哈希的生产资源
+│   ├── assets/
+│   │   ├── index-<hash>.js    # React SPA 与 API 客户端打包产物
+│   │   └── index-<hash>.css   # 打包后的全局样式
+│   ├── favicon.svg
+│   └── reloop-logo.png
 ├── sql/                       # DDL 脚本
 ├── _migrate_linda.py          # 生产数据归属迁移脚本 (孤儿 open_id -> 飞书身份, 默认 dry-run)
 ├── tests/                     # 测试 (test_pipeline.py: SQLite 覆盖 + LLM 离线)
@@ -54,9 +53,11 @@ Reloop/
 
 ```
 【第一部分 读取数据】TTC 私域人才库 (app.ttcadvisory.com, 需飞书登录)
-    │  服务端全局 Token (BRAINX_TTC_TALENT_AUTH_TOKEN) 认证
+    ├─ 访客共享池: 仅使用服务端 BRAINX_TTC_SHARED_AUTH_TOKEN
+    └─ 登录用户个人库: 使用 users.ttc_auth_token 中 v1: Fernet 加密的每用户凭据
+       (读取时显式传给 owned 同步；缺失、明文旧值或解密失败均要求重新连接，绝不回退共享凭据)
     ▼
-TTCClient.fetch_talents()  ── 分页拉取 (page/page_size=100, 重试+退避)
+TTCClient.fetch_talents(source="shared" | "owned")  ── 分页拉取 (page/page_size=100, 重试+退避)
     │
 【第二部分 提取字段与数据库】
     ▼
@@ -240,7 +241,8 @@ cp .env.example .env
 #   BRAINX_MYSQL_*    — RDS MySQL 连接（生产 reloop_app 库）
 #   BRAINX_LLM_*      — 推荐引擎的 OpenAI 兼容模型与 embedding 配置
 #   BRAINX_DEEPSEEK_* — 仅后端的 JD 结构化解析配置
-#   BRAINX_TTC_*      — 访客共享池的可选服务端配置
+#   BRAINX_TTC_SHARED_AUTH_TOKEN — 仅访客共享池使用的可选服务端凭据
+#   BRAINX_TTC_TALENT_*          — TTC 网关/空间等服务配置；不作为个人同步凭据回退
 #   BRAINX_FEISHU_*   — 飞书应用 App ID/Secret（扫码登录）
 ```
 

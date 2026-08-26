@@ -70,7 +70,7 @@ class TTCClient:
     def __init__(self) -> None:
         self.base_url = settings.ttc_talent_api_base_url
         self.default_space_id = settings.ttc_talent_space_id
-        self.auth_token = settings.ttc_shared_auth_token or settings.ttc_talent_auth_token
+        self.shared_auth_token = settings.ttc_shared_auth_token
         self.api_path = settings.ttc_talent_api_path
 
     def fetch_talents(self, space_id: Optional[str] = None,
@@ -81,11 +81,11 @@ class TTCClient:
 
         progress_callback(total, current) 可传入以获取拉取进度。
         """
-        token = auth_token or self.auth_token
-        if not token:
-            raise TTCAuthRequired("TTC 人才库需要有效登录态；请先登录飞书或配置共享库只读凭据")
         if source not in {"owned", "shared"}:
             raise ValueError(f"未知 TTC 数据源: {source}")
+        token = auth_token if source == "owned" else auth_token or self.shared_auth_token
+        if not token:
+            raise TTCAuthRequired("TTC 人才库需要有效登录态；请先登录飞书或配置共享库只读凭据")
         space_id = space_id or self.default_space_id
         if source == "shared" and not space_id:
             raise TTCFetchError("共享人才库缺少空间 ID")
@@ -189,7 +189,7 @@ class TalentSyncService:
         """为指定用户同步人才库数据(隔离写入)。
 
         raw_payload 传入时走 ingest(页面导出 JSON); 否则尝试接口拉取。
-        auth_token/space_id 未传时用 .env 全局配置。
+        shared source 可使用 .env 的共享凭据；owned source 必须显式传 auth_token。
         progress_callback(current, total) 用于实时进度。
         返回新增/更新的人才数。
         """

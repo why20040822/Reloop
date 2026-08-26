@@ -17,7 +17,7 @@ router = APIRouter(prefix="/sync", tags=["数据同步"])
 def sync_from_ttc(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     owner = user.user_id
     if owner == settings.guest_owner_id:
-        token = settings.ttc_shared_auth_token or settings.ttc_talent_auth_token
+        token = settings.ttc_shared_auth_token
         if not token:
             raise HTTPException(status_code=409, detail="共享人才库接口要求登录态；请在服务端配置 BRAINX_TTC_SHARED_AUTH_TOKEN")
         space_id, source, token_source = settings.ttc_talent_space_id or None, "shared", "shared_service"
