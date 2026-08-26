@@ -87,10 +87,11 @@ def test_official_callback_binds_user_and_starts_owned_sync(monkeypatch):
         db.close()
 
 
-def test_official_callback_rejects_missing_vault_key_without_writing_or_syncing(monkeypatch):
+@pytest.mark.parametrize("submitted_token", ["a-token-that-is-long-enough-to-be-accepted", ""])
+def test_official_callback_rejects_missing_vault_key_without_writing_or_syncing(monkeypatch, submitted_token):
     monkeypatch.setattr(settings, "auth_vault_key", "")
     init_db()
-    user_id = "fs_ttc_vault_missing"
+    user_id = f"fs_ttc_vault_missing_{'value' if submitted_token else 'blank'}"
     db = SessionLocal()
     try:
         db.query(User).filter(User.user_id == user_id).delete()
@@ -106,7 +107,7 @@ def test_official_callback_rejects_missing_vault_key_without_writing_or_syncing(
         result = client.post(
             "/auth/ttc/bind",
             headers={"X-Auth-Token": session_token},
-            json={"token": "a-token-that-is-long-enough-to-be-accepted"},
+            json={"token": submitted_token},
         )
 
     assert result.status_code == 503

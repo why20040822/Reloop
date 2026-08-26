@@ -55,9 +55,10 @@ def _credential_cipher() -> Fernet:
 
 def seal_user_token(token: str) -> str:
     """Return a versioned encrypted value for a user-owned TTC token."""
+    cipher = _credential_cipher()
     if not token:
         return ""
-    return "v1:" + _credential_cipher().encrypt(token.encode("utf-8")).decode("utf-8")
+    return "v1:" + cipher.encrypt(token.encode("utf-8")).decode("utf-8")
 
 
 def unseal_user_token(value: str | None) -> str:
