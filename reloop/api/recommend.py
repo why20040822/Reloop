@@ -132,15 +132,15 @@ def feedback(
         t = db.get(TalentProfile, body.talent_id)
         if t and t.owner_user_id == owner:
             tags = t.tags or []
-            if "收藏" not in tags:
-                tags.append("收藏")
+            if "已关注" not in tags:
+                tags.append("已关注")
                 t.tags = tags
     if body.action == "unfav":
         t = db.get(TalentProfile, body.talent_id)
         if t and t.owner_user_id == owner:
             tags = t.tags or []
-            if "收藏" in tags:
-                tags = [x for x in tags if x != "收藏"]
+            if "已关注" in tags:
+                tags = [x for x in tags if x != "已关注"]
                 t.tags = tags
     db.commit()
     return {"ok": True}

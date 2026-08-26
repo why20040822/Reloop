@@ -28,6 +28,9 @@ STANDARD_KEYS = (
     "work_years", "education", "skills", "summary",
     "last_active_at", "resume_updated_at", "tags", "raw",
     "notes", "stability", "work_history", "projects", "delivery_records",
+    "contact_phone", "contact_email", "seek_status",
+    "current_salary", "expected_salary", "target_positions",
+    "education_history", "contact_status",
 )
 
 # TTC 字段别名映射: 标准key -> 站点可能出现的字段名(按顺序取第一个命中)
@@ -118,7 +121,11 @@ def parse_datetime(value) -> Optional[dt.datetime]:
         except ValueError:
             continue
     try:
-        return dt.datetime.fromisoformat(text)
+        parsed = dt.datetime.fromisoformat(text)
+        # 统一转 UTC naive, 避免带时区 datetime 入库 MySQL DATETIME 时区混乱
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(dt.timezone.utc).replace(tzinfo=None)
+        return parsed
     except ValueError:
         return None
 
@@ -161,22 +168,30 @@ def _trunc(value, n: int):
 
 
 def _normalize_ttc_api_item(item: dict) -> dict:
-    """真实 TTC 接口嵌套结构 -> 标准格式。
+    """真实 TTC 接口嵌套结构 -> 标准格式 (2026-08-26 按真实 XHR 重构)。
 
-    字段映射(站点 gateway.ttcadvisory.com):
+    实测字段结构(gateway.ttcadvisory.com/api/private-talent/v1/all-talents/{sid}/talents):
       id                              -> source_id
-      basic.name.cn_name              -> name
+      basic.name.cn_name / en_name    -> name
       basic.location[0]               -> base_location
+      basic.phone / basic.email       -> contact_phone / contact_email (联系方式)
       work.macro.current_company_name -> company
       work.macro.current_position     -> position
       work.macro.work_experience_months / 12 -> work_years
+      work.items[]                    -> work_history (多段工作经历, 含起止时间/公司/岗位/
+                                           职级/职责长文本/管理规模/公司类别/业务领域/是否实习)
+      work.macro.*                    -> stability (稳定性指标 JSON, 月->年)
       education.macro.highest_degree  -> education
-      skill.language                  -> skills
-      dynamic.macro.last_updated_at   -> last_active_at
-      dynamic.macro.target_positions  -> tags (粗筛命中岗位关键词)
-      dynamic.macro.notes/remark      -> notes (运营备注)
-      work.macro.stability/tenure     -> stability (稳定性指标 JSON)
-      work.detail/history             -> work_history (工作经历 JSON list)
+      education.items[]               -> education_history (教育经历明细)
+      project.items[]                 -> projects (项目经验)
+      skill.ai_ability                -> skills (AI 能力标签)
+      dynamic.macro.last_updated_at   -> last_active_at (人才最后更新 = 简历更新时间, 活跃度核心)
+      dynamic.macro.resume_updated_at -> resume_updated_at
+      dynamic.macro.seek_status       -> seek_status (求职状态)
+      dynamic.macro.current_salary_raw/expected_salary -> 薪资
+      dynamic.macro.target_positions  -> target_positions (目标岗位)
+      dynamic.macro.concern_reason/concern_tags -> notes (人才库运营备注)
+      dynamic.macro.motivation        -> summary 求职动机段
       motivation/目标/学历/技能 拼接   -> summary (供 embedding/文本匹配)
     """
     basic = item.get("basic") or {}
@@ -184,33 +199,73 @@ def _normalize_ttc_api_item(item: dict) -> dict:
     edu_macro = (item.get("education") or {}).get("macro") or {}
     work_macro = (item.get("work") or {}).get("macro") or {}
     skill = item.get("skill") or {}
-    work_detail = (item.get("work") or {}).get("detail") or {}
-    work_history_raw = work_detail.get("experiences") or work_detail.get("history") or []
+    work_items = (item.get("work") or {}).get("items") or []
+    edu_items = (item.get("education") or {}).get("items") or []
+    project_items = (item.get("project") or {}).get("items") or []
 
-    name = (basic.get("name") or {}).get("cn_name") or "未知"
+    name_obj = basic.get("name") or {}
+    name = name_obj.get("cn_name") or name_obj.get("en_name") or "未知"
     base_location = _first(basic.get("location") or [])
     company = work_macro.get("current_company_name")
     position = work_macro.get("current_position")
     months = work_macro.get("work_experience_months")
     work_years = round(months / 12.0, 2) if isinstance(months, (int, float)) else None
     education = normalize_education(edu_macro.get("highest_degree"))
-    skills = skill.get("language") or []
+    # 技能: 真实字段是 skill.ai_ability (AI 能力标签); 兼容旧字段 skill.language
+    skills = skill.get("ai_ability") or skill.get("language") or []
     if isinstance(skills, str):
         skills = [s.strip() for s in re.split(r"[,，、/;；|]", skills) if s.strip()]
-    last_active_at = parse_datetime(dyn_macro.get("last_updated_at") or item.get("created_at"))
-    # 简历最新更新时间(活跃度核心参考维度, 数据获取成本低且准确性高)
-    resume_updated_at = parse_datetime(dyn_macro.get("resumeUpdatedAt") or dyn_macro.get("resume_updated_at") or dyn_macro.get("last_updated_at"))
+
+    # 联系方式(列表取首个)
+    contact_phone = _first(basic.get("phone") or [])
+    contact_email = _first(basic.get("email") or [])
+
+    # 活跃时间: 人才在 TTC 平台的最后更新(简历更新时间, 活跃度核心参考维度);
+    # 无 dynamic 段的人才用入库时间 created_at 兜底。
+    last_active_at = parse_datetime(
+        dyn_macro.get("last_updated_at") or item.get("created_at")
+    )
+    resume_updated_at = parse_datetime(
+        dyn_macro.get("resume_updated_at")
+        or dyn_macro.get("resumeUpdatedAt")
+        or dyn_macro.get("last_updated_at")
+        or item.get("created_at")
+    )
 
     target_positions = dyn_macro.get("target_positions") or []
     tags = list(dict.fromkeys([*target_positions, *([position] if position else [])]))
 
-    # 新字段: notes / stability / work_history / projects / delivery_records
-    notes = dyn_macro.get("notes") or dyn_macro.get("remark") or None
-    stability = _parse_stability(work_macro)
-    work_history = _parse_work_history(work_history_raw)
-    projects = _parse_projects(item)
+    # ---- 备注(收藏状态/联系状态/备注语句) ----
+    # 人才库运营备注: 关注原因(concern_reason) 是最有价值的备注信号
+    concern_tags = dyn_macro.get("concern_tags") or []
+    concern_reason = dyn_macro.get("concern_reason")
+    notes = None
+    note_parts = []
+    if concern_reason:
+        note_parts.append("；".join(concern_reason) if isinstance(concern_reason, list) else str(concern_reason))
+    if concern_tags:
+        note_parts.append("关注标签: " + ("、".join(concern_tags) if isinstance(concern_tags, list) else str(concern_tags)))
+    if note_parts:
+        notes = " | ".join(note_parts)
+    if not notes:
+        notes = dyn_macro.get("notes") or dyn_macro.get("remark") or None
+    # 联系状态: 由求职状态推导默认值(未联系), 人工可改
+    seek_status = dyn_macro.get("seek_status") or None
+    contact_status = None
+    if seek_status:
+        if "已离职" in str(seek_status) or "离职" in str(seek_status):
+            contact_status = "未联系"  # 离职找工作中, 值得优先联系
+    # 薪资: 保留原文(current_salary_raw 更可读) + 数字(万/月)
+    current_salary = dyn_macro.get("current_salary_raw") or dyn_macro.get("current_salary")
+    expected_salary = dyn_macro.get("expected_salary")
+
+    stability = _parse_stability(work_macro, work_items)
+    work_history = _parse_work_history(work_items)
+    projects = _parse_projects(project_items)
+    education_history = _parse_education_history(edu_items)
     delivery_records = _parse_delivery_records(item)
 
+    # ---- summary: 画像摘要文本(供 embedding 与文本匹配, 尽量全) ----
     parts = [str(name)]
     if company:
         parts.append(company)
@@ -223,12 +278,26 @@ def _normalize_ttc_api_item(item: dict) -> dict:
     if education:
         parts.append(education)
     if skills:
-        parts.append(" ".join(skills))
+        parts.append("技能:" + " ".join(skills))
+    if seek_status:
+        parts.append(f"求职状态:{seek_status}")
+    if current_salary:
+        parts.append(f"现薪:{current_salary}")
     if target_positions:
         parts.append("目标:" + " ".join(target_positions))
     motivation = dyn_macro.get("motivation")
     if motivation:
-        parts.append(motivation)
+        parts.append(f"动机:{motivation}")
+    # 工作职责摘要(前 200 字, 匹配信号强)
+    if work_history:
+        wh_summary = " ".join(
+            f"{w.get('company') or ''}{w.get('business_line') or ''}{w.get('position') or ''}"
+            f"{'(' + str(w.get('management_scale')) + ')' if w.get('management_scale') else ''}:"
+            f"{(w.get('description') or '')[:200]}"
+            for w in work_history[:3]
+        )
+        if wh_summary:
+            parts.append("经历:" + wh_summary)
     if notes:
         parts.append(f"备注:{notes}")
     summary = " | ".join(p for p in parts if p)
@@ -252,66 +321,145 @@ def _normalize_ttc_api_item(item: dict) -> dict:
         "work_history": work_history,
         "projects": projects,
         "delivery_records": delivery_records,
+        "contact_phone": _trunc(contact_phone, 64),
+        "contact_email": _trunc(contact_email, 128),
+        "seek_status": _trunc(seek_status, 64),
+        "current_salary": _trunc(str(current_salary) if current_salary is not None else None, 64),
+        "expected_salary": _trunc(str(expected_salary) if expected_salary is not None else None, 64),
+        "target_positions": target_positions or [],
+        "education_history": education_history,
+        "contact_status": contact_status,
     }
 
 
-def _parse_stability(work_macro: dict) -> Optional[dict]:
-    """从 work.macro 解析稳定性指标。"""
+def _parse_stability(work_macro: dict, work_items: list = None) -> Optional[dict]:
+    """从 work.macro 解析稳定性指标(月 -> 年)。work_items 用于补 company_count。"""
     if not work_macro:
         return None
-    avg_tenure = work_macro.get("avg_tenure") or work_macro.get("average_tenure")
-    max_tenure = work_macro.get("max_tenure") or work_macro.get("longest_tenure")
-    recent_tenure = work_macro.get("recent_tenure") or work_macro.get("current_tenure")
+    avg_tenure_month = work_macro.get("avg_tenure_month") or work_macro.get("avg_tenure")
+    max_tenure_month = work_macro.get("max_tenure_month") or work_macro.get("max_tenure")
+    recent_tenure_month = work_macro.get("latest_tenure_month") or work_macro.get("recent_tenure") or work_macro.get("current_tenure")
     company_count = work_macro.get("company_count") or work_macro.get("company_number")
-    if any(v is not None for v in [avg_tenure, max_tenure, recent_tenure, company_count]):
-        return {
-            "avg_tenure": float(avg_tenure) if avg_tenure is not None else None,
-            "max_tenure": float(max_tenure) if max_tenure is not None else None,
-            "recent_tenure": float(recent_tenure) if recent_tenure is not None else None,
-            "company_count": int(company_count) if company_count is not None else None,
-        }
-    return None
+    if company_count is None and work_items:
+        company_count = len({(w.get("company_name") or w.get("company") or "") for w in work_items if isinstance(w, dict)})
+    out = {}
+    if avg_tenure_month is not None:
+        out["avg_tenure"] = round(float(avg_tenure_month) / 12.0, 2)
+    if max_tenure_month is not None:
+        out["max_tenure"] = round(float(max_tenure_month) / 12.0, 2)
+    if recent_tenure_month is not None:
+        out["recent_tenure"] = round(float(recent_tenure_month) / 12.0, 2)
+    if company_count is not None:
+        out["company_count"] = int(company_count)
+    # 补充: 是否有大厂经验 / 管理经验 / 最高管理规模 (前端展示用)
+    if "has_big_company_exp" in work_macro:
+        out["has_big_company_exp"] = bool(work_macro["has_big_company_exp"])
+    if "has_management_exp" in work_macro:
+        out["has_management_exp"] = bool(work_macro["has_management_exp"])
+    if work_macro.get("max_management_scale"):
+        out["max_management_scale"] = str(work_macro["max_management_scale"])
+    return out if out else None
 
 
-def _parse_work_history(work_history_raw) -> Optional[list]:
-    """从 work.detail/history 解析工作经历列表。"""
-    if not work_history_raw or not isinstance(work_history_raw, list):
+def _parse_work_history(work_items) -> Optional[list]:
+    """从 work.items 解析工作经历列表(多段, 对齐 TTC 真实格式)。
+
+    每段包含: 基本信息(公司/业务线/岗位·职级)、工作职责(description 长文本)、
+    管理规模(management_scale)、起止时间、任职时长、公司类别、业务领域、是否实习。
+    同时兼容旧路径 work.detail.experiences / work.detail.history。
+    """
+    if work_items is None:
+        return None
+    if isinstance(work_items, dict):
+        work_items = work_items.get("experiences") or work_items.get("history") or []
+    if not work_items or not isinstance(work_items, list):
         return None
     out = []
-    for wh in work_history_raw:
+    for wh in work_items:
         if not isinstance(wh, dict):
             continue
+        is_intern = wh.get("is_internship")
+        if isinstance(is_intern, dict):
+            is_intern = is_intern.get("label") in ("Y", "是", "true")
+        company = wh.get("company_name") or wh.get("company") or wh.get("company_std")
+        position = wh.get("position") or wh.get("title")
+        entry = {
+            "company": company,
+            "company_std": wh.get("company_name_std") or wh.get("company_std"),
+            "business_line": wh.get("business_line") or wh.get("business_domain"),
+            "position": position,
+            "position_std": wh.get("position_std"),
+            "job_level": wh.get("job_level") or wh.get("job_level_raw"),
+            "start_date": wh.get("start_time") or wh.get("start_date"),
+            "end_date": wh.get("end_time") or wh.get("end_date"),
+            "tenure_months": wh.get("tenure_months") or wh.get("months") or wh.get("duration_months"),
+            "duration_months": wh.get("tenure_months") or wh.get("months") or wh.get("duration_months"),
+            "description": wh.get("description") or wh.get("responsibility") or wh.get("duty"),
+            "management_scale": wh.get("management_scale") or wh.get("team_size"),
+            "has_management": wh.get("has_management"),
+            "company_category": wh.get("company_category") or wh.get("company_tier"),
+            "business_domain_category": wh.get("business_domain_category") or wh.get("industry_domain") or wh.get("industry"),
+            "is_internship": bool(is_intern),
+            "latest_performance": wh.get("latest_performance"),
+        }
+        out.append(entry)
+    return out if out else None
+
+
+def _parse_projects(project_items) -> Optional[list]:
+    """从 project.items 解析项目经验列表(对齐 TTC 真实格式)。兼容旧路径。"""
+    if project_items is None:
+        return None
+    if isinstance(project_items, dict):
+        project_items = project_items.get("items") or []
+    if not project_items or not isinstance(project_items, list):
+        return None
+    out = []
+    for p in project_items:
+        if not isinstance(p, dict):
+            continue
+        industry = p.get("industry_track") or p.get("industry") or p.get("industry_domain")
+        scenario = p.get("business_scenario") or p.get("scenario") or p.get("business_scenario_list")
         out.append({
-            "company": wh.get("company") or wh.get("company_name"),
-            "position": wh.get("position") or wh.get("title"),
-            "start_date": wh.get("start_date") or wh.get("startTime"),
-            "end_date": wh.get("end_date") or wh.get("endTime"),
-            "duration_months": wh.get("duration_months") or wh.get("months"),
-            "industry": wh.get("industry") or wh.get("industry_domain"),
-            "business_domain": wh.get("business_domain") or wh.get("domain"),
+            "name": p.get("project_name") or p.get("name") or p.get("title"),
+            "company": p.get("company_name") or p.get("company"),
+            "role": p.get("role"),
+            # 兼容旧前端字段名 (industry/scenario/tech_stack/description)
+            "industry": industry,
+            "scenario": scenario,
+            "tech_stack": p.get("tech_stack") or p.get("technologies"),
+            "start_date": p.get("project_start_month") or p.get("start_time") or p.get("start_date"),
+            "end_date": p.get("project_end_month") or p.get("end_time") or p.get("end_date"),
+            "description": p.get("project_description") or p.get("description") or p.get("desc"),
+            "core_achievement": p.get("core_achievement"),
+            "project_nature": p.get("project_nature") or p.get("nature"),
+            "project_highlight": p.get("project_highlight") or [],
+            "is_ai_project": p.get("is_ai_project"),
+            "has_landing": p.get("has_landing"),
+            "is_zero_to_one": p.get("is_zero_to_one"),
         })
     return out if out else None
 
 
-def _parse_projects(item: dict) -> Optional[list]:
-    """从 TTC 原始数据解析项目经验列表。"""
-    # 常见字段路径: item.projects / item.projectHistory / item.dynamic.macro.projects
-    raw = item.get("projects") or item.get("projectHistory") or item.get("project_history")
-    if not raw:
-        dyn_macro = (item.get("dynamic") or {}).get("macro") or {}
-        raw = dyn_macro.get("projects") or dyn_macro.get("projectExperiences")
-    if not raw or not isinstance(raw, list):
+def _parse_education_history(edu_items) -> Optional[list]:
+    """从 education.items 解析教育经历明细列表。"""
+    if not edu_items or not isinstance(edu_items, list):
         return None
     out = []
-    for p in raw:
-        if not isinstance(p, dict):
+    for e in edu_items:
+        if not isinstance(e, dict):
             continue
         out.append({
-            "name": p.get("name") or p.get("title") or p.get("project_name"),
-            "industry": p.get("industry") or p.get("industry_domain") or p.get("sector"),
-            "scenario": p.get("scenario") or p.get("business_scenario") or p.get("description"),
-            "tech_stack": p.get("tech_stack") or p.get("techStack") or p.get("technologies"),
-            "description": p.get("description") or p.get("desc"),
+            "school": e.get("school_name") or e.get("school"),
+            "school_std": e.get("school_name_std"),
+            "major": e.get("major"),
+            "degree": e.get("degree"),
+            "start_date": e.get("start_time") or e.get("start_date"),
+            "end_date": e.get("end_time") or e.get("end_date"),
+            "school_tier": e.get("school_tier") or e.get("tier") or [],
+            "is_full_time": e.get("is_full_time"),
+            "overseas_region": e.get("overseas_region"),
+            "qs_ranking": e.get("qs_ranking"),
         })
     return out if out else None
 
@@ -385,6 +533,14 @@ def normalize_talent(raw_item: dict) -> Optional[dict]:
         "work_history": _pick(raw_item, "work_history"),
         "projects": _pick(raw_item, "projects"),
         "delivery_records": _pick(raw_item, "delivery_records"),
+        "contact_phone": _pick(raw_item, "contact_phone"),
+        "contact_email": _pick(raw_item, "contact_email"),
+        "seek_status": _pick(raw_item, "seek_status"),
+        "current_salary": _pick(raw_item, "current_salary"),
+        "expected_salary": _pick(raw_item, "expected_salary"),
+        "target_positions": _pick(raw_item, "target_positions"),
+        "education_history": _pick(raw_item, "education_history"),
+        "contact_status": _pick(raw_item, "contact_status"),
     }
 
 

@@ -82,6 +82,18 @@ class TalentProfile(Base):
     base_location: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     company: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     position: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # 联系方式 (TTC basic.phone / basic.email, 列表取首个)
+    contact_phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    contact_email: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
+    # 求职状态 (TTC dynamic.macro.seek_status: 已离职找工作/在职看机会/在职不考虑...)
+    seek_status: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 当前薪资 / 期望薪资 (TTC dynamic.macro.current_salary_raw / expected_salary)
+    current_salary: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    expected_salary: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # 目标岗位 (TTC dynamic.macro.target_positions)
+    target_positions: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 联系状态 (运营备注: 未联系/已联系/沟通中/面试/已入职; 初始来自 TTC 备注, 人工可改)
+    contact_status: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     # 经验年限(年, 由 "X年X月经验" 解析)
     work_years: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     education: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
@@ -106,10 +118,21 @@ class TalentProfile(Base):
     resume_updated_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)
     # 职业发展稳定性指标 (JSON): {avg_tenure, max_tenure, recent_tenure, company_count}
     stability: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
-    # 工作经历明细 (JSON list): [{company, position, start_date, end_date, duration_months, industry, business_domain}]
+    # 工作经历明细 (JSON list, 对齐 TTC work.items 多段):
+    #   [{company, company_std, business_line, position, position_std, job_level,
+    #     start_date, end_date, tenure_months, duration_months,
+    #     description(工作职责长文本), management_scale, has_management,
+    #     company_category, business_domain_category, is_internship}]
     work_history: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
-    # 项目经验 (JSON list): [{name, industry, scenario, tech_stack, description}]
+    # 项目经验 (JSON list, 对齐 TTC project.items):
+    #   [{name, company, role, industry, business_scenario, tech_stack,
+    #     start_date, end_date, description, core_achievement, project_nature,
+    #     is_ai_project, has_landing, is_zero_to_one}]
     projects: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 教育经历明细 (JSON list, 对齐 TTC education.items):
+    #   [{school, school_std, major, degree, start_date, end_date,
+    #     school_tier, is_full_time, overseas_region, qs_ranking}]
+    education_history: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     # 投递记录 (JSON list): [{position, company, date, status, source}]
     delivery_records: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)

@@ -94,7 +94,21 @@ class StructuringService:
             work_history=talent.get("work_history"),
             projects=talent.get("projects"),
             delivery_records=talent.get("delivery_records"),
+            contact_phone=talent.get("contact_phone"),
+            contact_email=talent.get("contact_email"),
+            seek_status=talent.get("seek_status"),
+            current_salary=talent.get("current_salary"),
+            expected_salary=talent.get("expected_salary"),
+            target_positions=talent.get("target_positions") or [],
+            education_history=talent.get("education_history"),
+            # 联系状态: 新建默认"未联系"; 更新时保留人工已设置的状态, 不被同步覆盖
+            contact_status=talent.get("contact_status"),
         )
+        cs = fields["contact_status"]
+        if cs is None:
+            fields["contact_status"] = (
+                getattr(existing, "contact_status", None) if existing else "未联系"
+            )
         if existing:
             for k, v in fields.items():
                 setattr(existing, k, v)

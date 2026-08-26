@@ -24,6 +24,7 @@ from reloop.config import settings
 from reloop.db.engine import SessionLocal
 from reloop.modules.profile.structuring import structuring_service
 from reloop.modules.sync.normalizer import normalize_batch
+from reloop.db.models import TalentProfile
 
 logger = logging.getLogger(__name__)
 

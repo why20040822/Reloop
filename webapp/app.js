@@ -58,17 +58,30 @@ function loading() { view.innerHTML = `<div class="spinner">${t("loading")}…</
 async function renderHome() {
   const seq = ++homeSeq;
   loading();
-  const [positions, reco, followed] = await Promise.all([
-    api.listPositions().catch(() => []),
-    CURRENT_POSITION
-      ? api.recommend(CURRENT_POSITION, SORT_BY,
-          SORT_BY === "custom" ? W_ACTIVITY : undefined,
-          SORT_BY === "custom" ? W_MATCH : undefined).catch(() => ({ top_n: [], phase: "final" }))
-      : Promise.resolve({ top_n: [], phase: "final" }),
-    api.listFollowed().catch(() => []),
-  ]);
+  // 先获取岗位列表，确定 CURRENT_POSITION，再并行获取推荐+关注
+  const positions = await api.listPositions().catch(() => []);
   if (seq !== homeSeq) return;
   if (!CURRENT_POSITION && positions.length) CURRENT_POSITION = positions[0]?.position_name;
+  let reco = { top_n: [], phase: "final", total_pool: 0, shortlisted: 0 };
+  let followed = [];
+  try {
+    [reco, followed] = await Promise.all([
+      CURRENT_POSITION
+        ? api.recommend(CURRENT_POSITION, SORT_BY,
+            SORT_BY === "custom" ? W_ACTIVITY : undefined,
+            SORT_BY === "custom" ? W_MATCH : undefined).catch(() => reco)
+        : Promise.resolve(reco),
+      api.listFollowed().catch(() => []),
+    ]);
+    // 兼容后端返回 error 结构
+    if (reco && reco.error) {
+      console.warn("[home] recommend returned error:", reco.error);
+      reco = { top_n: [], phase: "final", total_pool: 0, shortlisted: 0 };
+    }
+  } catch (e) {
+    console.warn("[home] recommend error:", e);
+  }
+  if (seq !== homeSeq) return;
   renderHomeView(positions, reco, followed);
   if (reco.computing || reco.phase === "preview") {
     pollFinalResult(seq, CURRENT_POSITION);
@@ -123,6 +136,7 @@ function renderHomeView(positions, reco, followed) {
         </div>` : ""}
     </div>`;
 
+  const noPosMsg = positions.length === 0 ? '<div class="card soft" style="margin:12px 0"><div class="label">\u63d0\u793a</div><p>\u8bf7\u5148\u5230\u300c\u5c97\u4f4d\u7ba1\u7406\u300d\u8bbe\u5b9a\u62db\u8058\u5c97\u4f4d\u3002</p><a class="btn blue" href="#/positions" style="display:inline-block;text-decoration:none;margin-top:8px">\u53bb\u8bbe\u5b9a\u5c97\u4f4d</a></div>' : '';
   const rows = items.length ? items.map((it, idx) => rowHTML(it, idx === 0)).join("") : `<div class="empty">${t("empty_reco")}</div>`;
 
   view.innerHTML = `
@@ -179,7 +193,7 @@ function rowHTML(it, open) {
   return `<details class="row" data-tid="${it.talent_id}" ${open ? "open" : ""}>
     <summary>
       <span class="rank">#${String(it.rank).padStart(2, "0")}</span>
-      <span class="person"><span class="name-line"><span class="name">${esc(it.name)}${isFollowed ? ' <span class="fav-star">★</span>' : ""}</span><span class="base">${esc(it.base_location || "")}</span></span><span class="meta">${esc(it.company || "")} · ${esc(it.position || "")}</span><span class="reason">${esc(it.contact_reason || "")}${preview ? ` <span class="preview-tag">${t("preview_tag")}</span>` : ""}</span></span>
+      <span class="person"><span class="name-line"><span class="name">${esc(it.name)}${isFaved ? ' <span class="fav-star">★</span>' : ""}</span><span class="base">${esc(it.base_location || "")}</span></span><span class="meta">${esc(it.company || "")} · ${esc(it.position || "")}</span><span class="reason">${esc(it.contact_reason || "")}${preview ? ` <span class="preview-tag">${t("preview_tag")}</span>` : ""}</span></span>
       ${ring(it.score || 0)}
     </summary>
     <div class="expanded">
@@ -190,6 +204,7 @@ function rowHTML(it, open) {
           <button class="act ${isFaved ? "" : "primary"}" data-act="${isFaved ? "unfav" : "fav"}">${isFaved ? t("watch_remove") : t("watch_btn")}</button>
           <button class="act" data-act="reject">${t("act_skip")}</button>
           <button class="act" data-act="correct">${t("act_correct")}</button>
+          <button class="act view-profile" data-tid="${it.talent_id}">查看完整档案</button>
         </div>
         <div class="status-line" aria-live="polite">${statusText(it.status)}</div>
       </div>
@@ -205,6 +220,12 @@ function wireRows() {
       const btn = e.target.closest("button"); if (!btn) return;
       const tid = Number(group.dataset.tid); const action = btn.dataset.act;
       const status = group.parentElement.querySelector(".status-line");
+
+      // 查看完整档案 -> 跳转详情页
+      if (btn.classList.contains("view-profile")) {
+        location.hash = `#/talent/${tid}`;
+        return;
+      }
 
       if (action === "fav" || action === "unfav") {
         await api.feedback({ talent_id: tid, action });
@@ -237,10 +258,12 @@ async function renderTalents(keyword = "") {
   const list = await api.listTalents(keyword);
   const rows = list.length ? list.map((tp) => {
     const isFollowed = (tp.tags || []).includes("已关注");
+    const statusChip = tp.seek_status ? `<span class="tag st-${esc(tp.seek_status)}">${esc(tp.seek_status)}</span>` : "";
+    const contactChip = tp.contact_status ? `<span class="tag">联系: ${esc(tp.contact_status)}</span>` : "";
     return `<div class="titem" data-id="${tp.id}">
       <div><div class="name-line"><span class="name">${esc(tp.name)}${isFollowed ? ' <span class="fav-star">★</span>' : ""}</span><span class="base">${esc(tp.base_location || "")}</span></div>
       <div class="meta">${esc(tp.company || "")} · ${esc(tp.position || "")}</div>
-      <div class="tags-row">${(tp.skills || []).slice(0, 3).map((s) => `<span class="tag">${esc(s)}</span>`).join("")}</div></div>
+      <div class="tags-row">${(tp.skills || []).slice(0, 3).map((s) => `<span class="tag">${esc(s)}</span>`).join("")}${statusChip}${contactChip}</div></div>
       <span class="vscore">${tp.work_years != null ? tp.work_years.toFixed(1) + t("years_unit") : "—"}</span>
     </div>`;
   }).join("") : `<div class="empty">—</div>`;
@@ -276,7 +299,13 @@ async function renderFollowed() {
   if (badge) badge.textContent = String(followed.length);
 }
 
-// ============ Talent detail / 人才详情 ============
+// ============ Talent detail / 人才详情 (全字段) ============
+function fmtDate(v) {
+  if (!v) return "—";
+  const d = new Date(v);
+  return isNaN(d) ? String(v) : d.toLocaleDateString(LOCALE);
+}
+
 async function renderTalentDetail(id) {
   loading();
   const tp = await api.getTalent(id);
@@ -285,41 +314,81 @@ async function renderTalentDetail(id) {
   const kv = (k, v) => `<div class="kv"><span>${k}</span><div>${esc(v ?? "—")}</div></div>`;
   const isFollowed = (tp.tags || []).includes("已关注");
 
-  // 基本信息
+  // ---- 基本信息(含联系方式/求职状态/薪资/目标岗位) ----
   const basicInfo = [
+    kv("联系电话", tp.contact_phone || "—"),
+    kv("邮箱", tp.contact_email || "—"),
+    kv("所在城市", tp.base_location),
     kv(t("detail_years"), tp.work_years != null ? tp.work_years + t("years_unit") : "—"),
     kv(t("detail_edu"), tp.education),
+    kv("求职状态", tp.seek_status || "—"),
+    kv("当前薪资", tp.current_salary || "—"),
+    kv("期望薪资", tp.expected_salary || "—"),
+    kv("目标岗位", (tp.target_positions || []).join("、") || "—"),
     kv(t("detail_skills"), (tp.skills || []).join("、")),
-    kv(t("detail_base"), tp.base_location),
-    kv("简历更新", tp.resume_updated_at ? new Date(tp.resume_updated_at).toLocaleDateString(LOCALE) : "—"),
+    kv("简历更新", fmtDate(tp.resume_updated_at)),
+    kv("最近活跃", fmtDate(tp.last_active_at)),
   ].join("");
 
-  // 工作经历
+  // ---- 教育经历明细 ----
+  const eduRows = (tp.education_history || []).map((e) => {
+    const tier = Array.isArray(e.school_tier) ? e.school_tier.join("/") : (e.school_tier || "");
+    return `<div class="edu-item">
+      <strong>${esc(e.school || "")}</strong>${e.major ? ` · ${esc(e.major)}` : ""}
+      <span class="tag">${esc(e.degree || "")}</span>
+      <span class="hint">${esc(e.start_date || "")} - ${esc(e.end_date || "至今")}${tier ? " · " + esc(tier) : ""}</span>
+    </div>`;
+  }).join("");
+
+  // ---- 工作经历(多段: 起止时间/公司/业务线/岗位·职级/职责/管理规模) ----
   const workHistory = (tp.work_history || []).map((wh) => {
     const dur = wh.duration_months ? `${Math.round(wh.duration_months / 12)}年${wh.duration_months % 12}月` : "";
-    return `<div class="wh-item"><strong>${esc(wh.company || "")}</strong> · ${esc(wh.position || "")}<span class="hint">${esc(wh.start_date || "")} - ${esc(wh.end_date || "至今")}${dur ? " · " + dur : ""}</span>${wh.industry ? `<span class="tag">${esc(wh.industry)}</span>` : ""}</div>`;
+    const level = wh.job_level ? ` · ${esc(wh.job_level)}` : "";
+    const line = wh.business_line ? ` · ${esc(wh.business_line)}` : "";
+    const mgmt = wh.management_scale ? `<span class="tag">管理: ${esc(wh.management_scale)}</span>` : "";
+    return `<div class="wh-item">
+      <strong>${esc(wh.company || "")}</strong>${line}
+      <div class="meta">${esc(wh.position || "")}${level}</div>
+      <span class="hint">${esc(wh.start_date || "")} - ${esc(wh.end_date || "至今")}${dur ? " · " + dur : ""}${wh.is_internship ? " · 实习" : ""}</span>
+      ${mgmt}
+      ${wh.description ? `<div class="wh-desc">${esc(wh.description)}</div>` : ""}
+    </div>`;
   }).join("");
 
-  // 稳定性
+  // ---- 稳定性 ----
   const stab = tp.stability || {};
-  const stabilityInfo = stab.avg_tenure != null ? [
-    kv(t("stability_avg"), stab.avg_tenure ? stab.avg_tenure.toFixed(1) + "年" : "—"),
-    kv(t("stability_max"), stab.max_tenure ? stab.max_tenure.toFixed(1) + "年" : "—"),
-    kv(t("stability_recent"), stab.recent_tenure ? stab.recent_tenure.toFixed(1) + "年" : "—"),
+  const stabilityInfo = (stab.avg_tenure != null || stab.max_tenure != null) ? [
+    kv(t("stability_avg"), stab.avg_tenure != null ? stab.avg_tenure.toFixed(1) + "年" : "—"),
+    kv(t("stability_max"), stab.max_tenure != null ? stab.max_tenure.toFixed(1) + "年" : "—"),
+    kv(t("stability_recent"), stab.recent_tenure != null ? stab.recent_tenure.toFixed(1) + "年" : "—"),
     kv(t("stability_companies"), stab.company_count ?? "—"),
+    stab.max_management_scale ? kv("最大管理规模", stab.max_management_scale) : "",
+    stab.has_big_company_exp != null ? kv("大厂经验", stab.has_big_company_exp ? "是" : "否") : "",
   ].join("") : "";
 
-  // 项目经验
+  // ---- 项目经验(完整) ----
   const projects = (tp.projects || []).map((p) => {
     const stack = Array.isArray(p.tech_stack) ? p.tech_stack.join(", ") : (p.tech_stack || "");
-    return `<div class="proj-item"><strong>${esc(p.name || "")}</strong>${p.industry ? ` <span class="tag">${esc(p.industry)}</span>` : ""}${p.scenario ? `<div class="hint">${esc(p.scenario)}</div>` : ""}${stack ? `<div class="hint">${t("project_stack")}: ${esc(stack)}</div>` : ""}</div>`;
+    const ind = Array.isArray(p.industry) ? p.industry.join("/") : (p.industry || "");
+    const scen = Array.isArray(p.scenario) ? p.scenario.join("/") : (p.scenario || "");
+    const badges = [p.is_ai_project ? "AI项目" : "", p.has_landing ? "已落地" : "", p.is_zero_to_one ? "0→1" : ""].filter(Boolean).map((b) => `<span class="tag">${b}</span>`).join("");
+    return `<div class="proj-item">
+      <strong>${esc(p.name || "")}</strong>${p.role ? ` · ${esc(p.role)}` : ""}${p.company ? ` @ ${esc(p.company)}` : ""}
+      ${ind ? `<span class="tag">${esc(ind)}</span>` : ""}
+      ${badges}
+      <div class="hint">${esc(p.start_date || "")} - ${esc(p.end_date || "")}${scen ? " · 场景: " + esc(scen) : ""}</div>
+      ${stack ? `<div class="hint">${t("project_stack")}: ${esc(stack)}</div>` : ""}
+      ${p.description ? `<div class="wh-desc">${esc(p.description)}</div>` : ""}
+      ${p.core_achievement ? `<div class="wh-desc ach">成果: ${esc(p.core_achievement)}</div>` : ""}
+    </div>`;
   }).join("");
 
-  // 投递记录
+  // ---- 投递记录 ----
   const deliveries = (tp.delivery_records || []).map((d) => `<div class="del-item"><span>${esc(d.position || "")}</span> · <span>${esc(d.company || "")}</span><span class="hint">${esc(d.date || "")} ${esc(d.status || "")}</span></div>`).join("");
 
-  // 备注
-  const notes = tp.notes ? `<div class="card soft"><div class="label">${t("notes_title")}</div><p>${esc(tp.notes)}</p></div>` : "";
+  // ---- 备注(含关注原因/联系状态) ----
+  const contactStatusBadge = tp.contact_status ? `<span class="tag st-${esc(tp.contact_status)}">联系状态: ${esc(tp.contact_status)}</span>` : "";
+  const notes = (tp.notes || contactStatusBadge) ? `<div class="card soft"><div class="label">${t("notes_title")}</div><div class="tags-row">${contactStatusBadge}</div>${tp.notes ? `<p>${esc(tp.notes)}</p>` : `<p class="hint">—</p>`}</div>` : "";
 
   view.innerHTML = `
     <header class="topback"><button class="iconbtn" id="back">←</button><div class="kicker">${t("kicker")}</div></header>
@@ -327,9 +396,13 @@ async function renderTalentDetail(id) {
       <h1>${esc(tp.name)}</h1>
       <div class="meta">${esc(tp.company || "")} · ${esc(tp.position || "")} · ${esc(tp.base_location || "")}</div>
       <div class="tags-row">${(tp.tags || []).map((x) => `<span class="tag">${esc(x)}</span>`).join("")}</div>
-      <button class="btn ${isFaved ? "" : "blue"}" id="favBtn" data-fav="${isFaved ? "1" : "0"}">${isFaved ? t("watch_remove") : t("watch_btn")}</button>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:8px">
+        <button class="btn ${isFollowed ? "" : "blue"}" id="favBtn" data-fav="${isFollowed ? "1" : "0"}">${isFollowed ? t("watch_remove") : t("watch_btn")}</button>
+        ${tp.contact_status ? `<span class="badge">${esc(tp.contact_status)}</span>` : ""}
+      </div>
     </div>
     <div class="card soft"><div class="label">基本信息</div>${basicInfo}</div>
+    ${eduRows ? `<div class="card soft"><div class="label">教育经历</div>${eduRows}</div>` : ""}
     ${stabilityInfo ? `<div class="card soft"><div class="label">稳定性指标</div>${stabilityInfo}</div>` : ""}
     ${workHistory ? `<div class="card soft"><div class="label">${t("work_history_title")}</div>${workHistory}</div>` : ""}
     ${projects ? `<div class="card soft"><div class="label">${t("projects_title")}</div>${projects}</div>` : ""}

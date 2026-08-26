@@ -131,7 +131,9 @@ def build_activity_events(last_active_at=None,
         events.append(
             {"event_type": "profile_update", "occurred_at": resume_updated_at}
         )
-    if last_active_at is not None:
+    # 若 last_active_at 与 resume_updated_at 同源(都来自 TTC last_updated_at),
+    # 视为同一事件, 不再重复计数(避免等效双倍权重虚高活跃度)。
+    if last_active_at is not None and last_active_at != resume_updated_at:
         events.append(
             {"event_type": "platform_active", "occurred_at": last_active_at}
         )
