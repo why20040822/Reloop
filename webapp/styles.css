@@ -1075,3 +1075,35 @@ h1 { margin: 0; font-family: "Space Grotesk", Inter, sans-serif; font-size: clam
 .empty-sec {
   padding: 8px 14px;
 }
+
+/* ---- 详情页增强(工作经历职责长文本/教育经历/求职状态标签) ---- */
+.wh-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.wh-item:last-child { border-bottom: none; }
+.wh-desc {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.65;
+  margin-top: 6px;
+  white-space: pre-wrap;
+}
+.wh-desc.ach { color: var(--blue); }
+.edu-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.edu-item:last-child { border-bottom: none; }
+.proj-item {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line);
+}
+.proj-item:last-child { border-bottom: none; }
+.tag.st-已离职找工作, .tag.st-离职 { color: #c0392b; border-color: #c0392b; }
+.tag.st-在职看机会, .tag.st-在职考虑机会 { color: #8e6c1a; border-color: #e6c34a; }
+.view-profile { margin-left: auto; }

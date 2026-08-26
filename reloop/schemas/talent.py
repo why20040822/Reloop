@@ -27,6 +27,14 @@ class TalentOut(BaseModel):
     work_history: Optional[list] = None
     projects: Optional[list] = None
     delivery_records: Optional[list] = None
+    contact_phone: Optional[str] = None
+    contact_email: Optional[str] = None
+    seek_status: Optional[str] = None
+    current_salary: Optional[str] = None
+    expected_salary: Optional[str] = None
+    target_positions: Optional[list] = None
+    education_history: Optional[list] = None
+    contact_status: Optional[str] = None
     updated_at: Optional[dt.datetime] = None
     resume_text_preview: Optional[str] = None
 

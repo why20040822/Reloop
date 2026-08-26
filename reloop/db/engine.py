@@ -72,6 +72,9 @@ def _ensure_columns() -> None:
       - v0.3: users.ttc_auth_token / users.ttc_bound_name(飞书登录 + TTC 绑定)
       - v3.2: talent_profiles.notes / stability / work_history(运营备注 + 稳定性 + 工作经历)
       - v3.5: talent_profiles.projects / delivery_records / resume_updated_at
+      - v4.1: talent_profiles.contact_phone/contact_email/seek_status/
+              current_salary/expected_salary/target_positions/education_history/contact_status
+              (对齐 TTC 真实接口字段 + 备注: 收藏/联系状态/备注语句)
     """
     from sqlalchemy import inspect, text
 
@@ -89,6 +92,14 @@ def _ensure_columns() -> None:
             ("projects", "JSON NULL"),
             ("delivery_records", "JSON NULL"),
             ("resume_updated_at", "DATETIME NULL"),
+            ("contact_phone", "VARCHAR(64) NULL"),
+            ("contact_email", "VARCHAR(128) NULL"),
+            ("seek_status", "VARCHAR(64) NULL"),
+            ("current_salary", "VARCHAR(64) NULL"),
+            ("expected_salary", "VARCHAR(64) NULL"),
+            ("target_positions", "JSON NULL"),
+            ("education_history", "JSON NULL"),
+            ("contact_status", "VARCHAR(32) NULL"),
         ],
     }
     insp = inspect(engine)

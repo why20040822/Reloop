@@ -75,11 +75,14 @@ BATCH_MATCH_PROMPT = (
 _FALLBACK_DIM = 256
 
 
-def _extract_first_json_object(raw: str) -> str:
-    """从 LLM 输出中稳健提取【首个完整 JSON 对象】。
+def _extract_first_json(raw: str) -> str:
+    """从 LLM 输出中稳健提取【首个完整 JSON 值】(对象 {...} 或数组 [...]）。
 
-    修复原贪婪正则 \\{.*\\} 的问题(会从第一个 { 吃到最后一个 }, 多块/尾随文本时抓错):
-    先剥 markdown 代码围栏, 再用括号计数(跳过字符串内的括号与转义)截取第一个平衡的 {...}。
+    修复两类问题:
+      - 原贪婪正则 \\{.*\\} 会从第一个 { 吃到最后一个 }(多块/尾随文本时抓错);
+      - 原实现只认对象, 模型返回纯数组 [..] 时直接返回空, 导致 batch_match_scores 失效。
+    做法: 先剥 markdown 代码围栏, 再取首个 { 或 [ 作为起点, 括号计数(跳过字符串内括号与转义)
+    截取第一个平衡片段。
     """
     if not raw:
         return ""
@@ -88,9 +91,11 @@ def _extract_first_json_object(raw: str) -> str:
     if s.startswith("```"):
         s = re.sub(r"^```[a-zA-Z]*\s*", "", s)
         s = re.sub(r"\s*```$", "", s).strip()
-    start = s.find("{")
-    if start == -1:
+    cand = [i for i in (s.find("{"), s.find("[")) if i != -1]
+    if not cand:
         return ""
+    start = min(cand)
+    open_ch, close_ch = ("{", "}") if s[start] == "{" else ("[", "]")
     depth = 0
     in_str = False
     esc = False
@@ -106,9 +111,9 @@ def _extract_first_json_object(raw: str) -> str:
             continue
         if ch == '"':
             in_str = True
-        elif ch == "{":
+        elif ch == open_ch:
             depth += 1
-        elif ch == "}":
+        elif ch == close_ch:
             depth -= 1
             if depth == 0:
                 return s[start : i + 1]
@@ -131,18 +136,61 @@ def _fallback_embed(text: str) -> list[float]:
 
 
 class LLMService:
-    """OpenAI 兼容大模型封装。无 key 时走 stub 降级。"""
+    """OpenAI 兼容大模型封装。无 key 时走 stub 降级。
+
+    熔断: 连续 _CIRCUIT_FAIL_LIMIT 次网络/接口失败后自动进入离线模式,
+    后续调用直接走降级, 不再逐次网络往返——
+    避免 LLM 服务不可用时拖慢同步/推荐(如 378 条人才每条都等一次超时)。
+
+    chat 与 embed 使用【独立】熔断: embedding 接口不可用(如 step_plan 推理
+    通道不支持 embeddings)只会影响向量维度降级, 不会拖垮 chat/匹配度计算。
+    """
+
+    _CIRCUIT_FAIL_LIMIT = 3
 
     def __init__(self) -> None:
         self.base_url = settings.llm_base_url.rstrip("/")
         self.api_key = settings.llm_api_key
         self.model = settings.llm_model
         self.embed_model = settings.llm_embedding_model
-        self._available = bool(self.api_key)
+        self._has_key = bool(self.api_key)
+        # 独立熔断: chat(匹配/抽取) 与 embed(向量) 互不影响
+        self._chat_fail_streak = 0
+        self._chat_circuit_open = False
+        self._embed_fail_streak = 0
+        self._embed_circuit_open = False
+
+    # ---------------- 熔断辅助 (chat) ----------------
+    def _chat_note_failure(self) -> None:
+        self._chat_fail_streak += 1
+        if self._chat_fail_streak >= self._CIRCUIT_FAIL_LIMIT:
+            self._chat_circuit_open = True
+            logger.warning("[llm] chat 连续失败 %d 次, 熔断进入离线模式(后续用本地降级)", self._chat_fail_streak)
+
+    def _chat_note_success(self) -> None:
+        self._chat_fail_streak = 0
+
+    @property
+    def _chat_online(self) -> bool:
+        return self._has_key and not self._chat_circuit_open
+
+    # ---------------- 熔断辅助 (embed) ----------------
+    def _embed_note_failure(self) -> None:
+        self._embed_fail_streak += 1
+        if self._embed_fail_streak >= self._CIRCUIT_FAIL_LIMIT:
+            self._embed_circuit_open = True
+            logger.warning("[llm] embed 连续失败 %d 次, 熔断改用本地哈希向量", self._embed_fail_streak)
+
+    def _embed_note_success(self) -> None:
+        self._embed_fail_streak = 0
+
+    @property
+    def _embed_online(self) -> bool:
+        return self._has_key and not self._embed_circuit_open
 
     # ---------------- 通用对话 ----------------
     def chat(self, prompt: str, system: Optional[str] = None) -> str:
-        if not self._available:
+        if not self._chat_online:
             return ""
         messages = []
         if system:
@@ -157,16 +205,18 @@ class LLMService:
             )
             resp.raise_for_status()
             data = resp.json()
+            self._chat_note_success()
             return (data["choices"][0]["message"]["content"] or "").strip()
         except Exception as e:  # noqa: BLE001
             logger.warning("[llm] chat error: %s", e)
+            self._chat_note_failure()
             return ""
 
     def chat_json(self, prompt: str) -> dict:
         raw = self.chat(prompt)
         if not raw:
             return {}
-        block = _extract_first_json_object(raw)
+        block = _extract_first_json(raw)
         if not block:
             return {}
         try:
@@ -175,12 +225,30 @@ class LLMService:
         except Exception:  # noqa: BLE001
             return {}
 
+    def chat_json_list(self, prompt: str) -> list:
+        """同 chat_json, 但返回 JSON 数组(用于批量评分等返回 [..] 的提示)。"""
+        raw = self.chat(prompt)
+        if not raw:
+            return []
+        block = _extract_first_json(raw)
+        if not block:
+            return []
+        try:
+            data = json.loads(block)
+            return data if isinstance(data, list) else []
+        except Exception:  # noqa: BLE001
+            return []
+
     # ---------------- 向量 ----------------
     def embed(self, text: str) -> list[float]:
-        """优先真实 embedding 接口; 无 key/失败时哈希向量兜底(离线可跑)。"""
+        """优先真实 embedding 接口; 无 key/失败/通道不支持时哈希向量兜底(离线可跑)。
+
+        注意: 部分厂商通道(如 stepfun step_plan 推理通道)不提供 embeddings,
+        此时会快速 404 -> 熔断 -> 之后直接走本地哈希向量, 不再每次网络往返。
+        """
         if not text:
             return []
-        if self._available:
+        if self._embed_online:
             try:
                 resp = httpx.post(
                     f"{self.base_url}/embeddings",
@@ -189,28 +257,30 @@ class LLMService:
                     timeout=settings.llm_timeout,
                 )
                 resp.raise_for_status()
+                self._embed_note_success()
                 return resp.json()["data"][0]["embedding"]
             except Exception as e:  # noqa: BLE001
                 logger.warning("[llm] embed error(用本地兜底向量): %s", e)
+                self._embed_note_failure()
         return _fallback_embed(text)
 
     # ---------------- 业务封装 ----------------
     def structure_talent(self, text: str) -> dict:
         """原始文本 -> 标准结构化字段(LLM)。离线时返回空 dict, 由调用方兜底。"""
-        if not self._available:
+        if not self._chat_online:
             return {}
         return self.chat_json(STRUCTURE_PROMPT.format(text=text[:4000]))
 
     def generate_contact_reason(self, talent: str, position: str,
                                 jd: str = "") -> str:
-        if not self._available:
+        if not self._chat_online:
             return f"近期活跃且与{position}岗位匹配, 建议尽快联系。"
         out = self.chat(REASON_PROMPT.format(talent=talent, position=position, jd=jd[:500]))
         return out or f"近期活跃且与{position}岗位匹配, 建议尽快联系。"
 
     def analyze_tendency(self, records: str) -> tuple[Optional[float], str]:
         """返回 (0~1 分, 理由)。离线返回 (None, 说明)。"""
-        if not self._available:
+        if not self._chat_online:
             return None, "无 LLM, 未分析"
         data = self.chat_json(TENDENCY_PROMPT.format(text=records[:2000] or "无记录"))
         if not data:
@@ -232,7 +302,7 @@ class LLMService:
         - 进程内缓存 (jd_position, talent_position) -> score, 岗位不变时零重复调用
         - 无 key / 调用失败返回空 dict, 调用方降级到字面相似度
         """
-        if not self._available or not jd_position:
+        if not self._chat_online or not jd_position:
             return {}
         uniq = sorted({p.strip() for p in talent_positions if p and p.strip()})
         result: dict[str, float] = {}
@@ -278,7 +348,7 @@ class LLMService:
                       "skills": [...], "work_years": N, "education": "..."}, ...]
         返回 {idx: score}。LLM 不可用时返回空 dict(调用方降级到结构化)。
         """
-        if not self._available or not candidates:
+        if not self._chat_online or not candidates:
             return {}
         result: dict[int, float] = {}
         todo: list[dict] = []
@@ -302,7 +372,7 @@ class LLMService:
                 jd_text=jd_text[:2000] if jd_text else "",
                 candidates="\n".join(lines),
             )
-            data = self.chat_json(prompt)
+            data = self.chat_json_list(prompt)
             if not isinstance(data, list):
                 logger.warning("[llm] batch_match invalid, len=%d", len(batch))
                 continue

@@ -39,3 +39,6 @@ htmlcov/
 
 # 临时提取脚本
 extract_docx.py
+
+# ECS 部署快照(含环境备份/tar 包, 禁止提交)
+.workbuddy/ecs_deploy_snapshot/

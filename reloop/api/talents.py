@@ -37,7 +37,7 @@ def list_talents(
             TalentProfile.position.contains(keyword),
         ))
     q = q.order_by(TalentProfile.id.desc())
-    
+
     # 访客模式且池为空时，自动触发一次同步（异步，不阻塞返回）
     if settings.auth_allow_guest and owner == settings.guest_owner_id:
         count = q.count()
@@ -52,11 +52,26 @@ def list_talents(
                 )
             except Exception:  # noqa: BLE001
                 pass
-    
+
     if limit is not None:
         limit = max(1, min(int(limit), 500))
         q = q.offset(max(0, int(offset))).limit(limit)
     return q.all()
+
+
+@router.get("/followed/list", summary="获取已关注人才列表")
+def list_followed(
+    db: Session = Depends(get_db),
+    owner: str = Depends(owner_user_id),
+):
+    """返回 tags 含 '已关注' 的人才列表。"""
+    q = (
+        db.query(TalentProfile)
+        .filter(TalentProfile.owner_user_id == owner)
+        .all()
+    )
+    followed = [t for t in q if t.tags and "已关注" in t.tags]
+    return followed
 
 
 @router.get("/{talent_id}", response_model=TalentOut, summary="人才详情")
@@ -116,21 +131,6 @@ def delete_talent(
     db.delete(t)
     db.commit()
     return {"ok": True}
-
-
-@router.get("/followed/list", summary="获取已关注人才列表")
-def list_followed(
-    db: Session = Depends(get_db),
-    owner: str = Depends(owner_user_id),
-):
-    """返回 tags 含 '已关注' 的人才列表。"""
-    q = (
-        db.query(TalentProfile)
-        .filter(TalentProfile.owner_user_id == owner)
-        .all()
-    )
-    followed = [t for t in q if t.tags and "已关注" in t.tags]
-    return followed
 
 
 @router.post("/{talent_id}/follow", summary="关注/取消关注人才")

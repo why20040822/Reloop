@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     mysql_host: str = "127.0.0.1"
     mysql_port: int = 3306
     mysql_user: str = ""
+    # ⚠️ 密码只从 .env 的 BRAINX_MYSQL_PASSWORD 读取, 禁止硬编码默认值(曾泄漏公网仓库)
     mysql_password: str = ""
     mysql_database: str = "reloop"
     mysql_pool_size: int = 10
