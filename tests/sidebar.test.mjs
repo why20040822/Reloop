@@ -65,6 +65,24 @@ test("dashboard heading omits the removed recommendation description", () => {
   assert.doesNotMatch(appSource, /基于人才活跃度与岗位匹配度，优先推进下一次触达。/);
 });
 
+test("ranked talent rows expose the required information without page subtitles", () => {
+  assert.match(appSource, /className="focus-current"/);
+  assert.match(appSource, /className="focus-experience"/);
+  assert.match(appSource, /className="focus-education"/);
+  assert.match(appSource, /className="focus-signal"/);
+  assert.match(appSource, /className="focus-score"/);
+  assert.match(appSource, /className="focus-activity"/);
+  assert.doesNotMatch(appSource, /搜索并处理人才库中的候选人。/);
+  assert.doesNotMatch(appSource, /你已标记的重点人选。/);
+  assert.doesNotMatch(appSource, /岗位与 JD 会直接影响人才匹配与排序。/);
+});
+
+test("ranked talent rows stay readable without mobile horizontal overflow", () => {
+  assert.match(stylesSource, /\.focus-list\s*\{[^}]*overflow:\s*hidden;/);
+  assert.match(stylesSource, /@media \(max-width:\s*760px\)[\s\S]*\.focus-row\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)\s+56px\s+17px;/);
+  assert.match(stylesSource, /@media \(max-width:\s*760px\)[\s\S]*\.rank,\s*\.focus-experience,\s*\.focus-education,\s*\.focus-activity\s*\{\s*display:\s*none;/);
+});
+
 test("empty position picker remains legible", () => {
   assert.match(appSource, /positions\.length === 0 && <option value="">暂无岗位<\/option>/);
   assert.match(appSource, /disabled=\{positions\.length === 0\}/);

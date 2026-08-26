@@ -11,6 +11,7 @@ import { positionHasParsedJd } from "./lib/jd";
 import { saveThenRefreshPosition } from "./lib/positionSave";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./lib/sidebar";
 import { scrubTtcCallbackHash } from "./lib/ttcCallback";
+import { buildActivityRows, buildMatchRows, relativeActivity } from "./lib/dashboard";
 
 const navItems = [
   { to: "/", label: "总览", icon: House, end: true },
@@ -260,9 +261,7 @@ function Dashboard() {
     }
   };
 
-  const rows = useMemo(() => mode === "match"
-    ? matches.map((match) => ({ talent: talents.find((talent) => talent.id === match.talent_id) || { id: match.talent_id, name: match.name, company: match.company, position: match.position, base_location: match.base_location, work_years: match.work_years, education: match.education }, score: match.score, reason: match.contact_reason || "综合匹配稳定，建议结合近期动态推进。" }))
-    : [...talents].sort((a, b) => (b.last_active_at || "").localeCompare(a.last_active_at || "")).map((talent) => ({ talent, score: talent.value_score, reason: talent.last_active_at ? `最近 ${relativeActivity(talent.last_active_at)} 有活跃信号` : "已进入人才库，建议查看完整资料。" })), [matches, mode, talents]);
+  const rows = useMemo(() => mode === "match" ? buildMatchRows(matches, talents) : buildActivityRows(talents), [matches, mode, talents]);
 
   return <><div className="dashboard-page">
     <PageHeading title="今天最该联系谁" action={<DirectGlassSegment containerRef={matchSegmentRef} value={mode} options={[{ value: "activity", label: "活跃优先" }, { value: "match", label: "岗位匹配" }]} onChange={(value) => { const nextMode = value as DashboardMode; if (nextMode === "match" && !positionHasParsedJd(selected)) { openParser(selected); return; } setMode(nextMode); }} ariaLabel="选择人才展示方式" />} />
@@ -271,7 +270,7 @@ function Dashboard() {
     {refreshWarning && <Notice tone="info">{refreshWarning}</Notice>}
     <button className="talent-summary" type="button" onClick={() => navigate("/talents")}><span><small>{mode === "match" ? "岗位匹配候选" : "近 7 天活跃人才"}</small><strong>{rows.length}</strong></span><span>前往人才库 <ArrowUpRight size={16} /></span></button>
     <section className="talent-focus"><div className="section-heading"><h2>{mode === "match" ? `${selectedPosition || "岗位"}匹配人才` : "最近活跃人才"}</h2><button className="text-button" onClick={() => navigate("/talents")}>查看全部 <ChevronRight size={15} /></button></div>
-      {loading ? <Loading /> : rows.length === 0 ? <Empty text="暂时没有可展示的人才。" /> : <div className="focus-list">{rows.map((row, index) => <button type="button" className="focus-row" key={row.talent.id} onClick={() => navigate(`/talent/${row.talent.id}`)}><span className="rank">{String(index + 1).padStart(2, "0")}</span><Avatar person={row.talent} size="large" /><span className="focus-person"><strong>{row.talent.name}</strong><small>{row.talent.company || "—"} · {row.talent.position || "—"}</small></span><span className="focus-reason">{row.reason}</span><span className="focus-score"><strong>{row.score == null ? "—" : Math.round(row.score * 100)}</strong><small>{mode === "match" ? "匹配分" : "价值分"}</small></span><ChevronRight size={16} /></button>)}</div>}
+      {loading ? <Loading /> : rows.length === 0 ? <Empty text="暂时没有可展示的人才。" /> : <div className="focus-list">{rows.map((row, index) => <button type="button" className="focus-row" key={row.talent.id} onClick={() => navigate(`/talent/${row.talent.id}`)}><span className="rank">{String(index + 1).padStart(2, "0")}</span><span className="focus-person"><Avatar person={row.talent} size="large" /><span><strong>{row.talent.name}</strong><small>{row.talent.base_location || "地点待补充"}</small></span></span><span className="focus-current"><small>当前经历</small><strong>{row.talent.company || "—"} · {row.talent.position || "—"}</strong></span><span className="focus-experience"><small>工作经历</small><strong>{row.talent.work_years ? `${row.talent.work_years} 年 · ${row.talent.company || "—"}` : "待补充"}</strong></span><span className="focus-education"><small>毕业院校</small><strong>{row.talent.education || "待补充"}</strong></span><span className="focus-signal"><small>最新动态</small><strong>{row.reason}</strong></span><span className="focus-score"><strong>{row.score == null ? "—" : Math.round(row.score * 100)}</strong><small>{mode === "match" ? "匹配分" : "价值分"}</small></span><span className="focus-activity"><small>最近活跃</small><strong>{relativeActivity(row.activeAt)}</strong></span><ChevronRight size={16} /></button>)}</div>}
     </section>
   </div><JDParserDrawer open={drawerOpen} rawJd={drawerRawJd} status={drawerStatus} analysis={drawerAnalysis} error={drawerError} returnFocusTarget={drawerReturnTarget.current} returnFocusFallback={drawerReturnFallback.current} onRawJdChange={(value) => { setDrawerRawJd(value); setDrawerError(""); }} onParse={() => void parseJd()} onConfirm={(analysis) => void confirmJd(analysis)} onReset={() => { setDrawerStatus("input"); setDrawerAnalysis(null); setDrawerError(""); }} onClose={() => setDrawerOpen(false)} /></>;
 }
@@ -285,7 +284,7 @@ function TalentList() {
   const [error, setError] = useState("");
   const load = async (next = keyword) => { try { setError(""); setTalents(followed ? await api.listFollowed() : await api.listTalents(next)); } catch (reason) { setError(errorMessage(reason)); } };
   useEffect(() => { void load(""); }, [followed]);
-  return <div><PageHeading title={followed ? "特别关注" : "人才库"} description={followed ? "你已标记的重点人选。" : "搜索并处理人才库中的候选人。"} />{error && <Notice tone="error">{error}</Notice>}
+  return <div><PageHeading title={followed ? "特别关注" : "人才库"} />{error && <Notice tone="error">{error}</Notice>}
     {!followed && <form className="search-field" onSubmit={(event) => { event.preventDefault(); void load(); }}><Search size={17} /><input value={keyword} onChange={(event) => setKeyword(event.target.value)} placeholder="搜索人才、公司或职位" /><button className="primary-button">搜索</button></form>}
     <div className="talent-table"><div className="talent-table-head"><span>人才</span><span>当前经历</span><span>核心技能</span><span>价值分</span></div>{talents.map((talent) => <button type="button" className="talent-row" key={talent.id} onClick={() => navigate(`/talent/${talent.id}`)}><span className="person-cell"><Avatar person={talent} /><span><strong>{talent.name}</strong><small>{talent.base_location || "—"} · {talent.work_years || "—"} 年</small></span></span><span>{talent.company || "—"}<small>{talent.position || ""}</small></span><span className="tag-list">{(talent.skills || []).slice(0, 3).map((skill) => <i key={skill}>{skill}</i>)}</span><strong>{number(talent.value_score)}</strong></button>)}{!talents.length && <Empty text="没有找到符合条件的人才。" />}</div>
   </div>;
@@ -316,7 +315,7 @@ function Positions() {
   const [message, setMessage] = useState("");
   const load = async () => setPositions(await api.listPositions());
   useEffect(() => { void load(); }, []);
-  return <div><PageHeading title="岗位管理" description="岗位与 JD 会直接影响人才匹配与排序。" /><div className="positions-layout"><section className="panel"><h2>已生效岗位</h2>{positions.length ? positions.map((position) => <article className="position-card" key={position.id}><div><strong>{position.position_name}</strong><p>{position.jd_text || "暂未填写 JD"}</p></div><button className="icon-button danger" aria-label={`删除 ${position.position_name}`} onClick={async () => { if (confirm(`删除「${position.position_name}」？`)) { await api.deletePosition(position.id); await load(); } }}><X size={16} /></button></article>) : <Empty text="还没有在招岗位。" />}</section>
+  return <div><PageHeading title="岗位管理" /><div className="positions-layout"><section className="panel"><h2>已生效岗位</h2>{positions.length ? positions.map((position) => <article className="position-card" key={position.id}><div><strong>{position.position_name}</strong><p>{position.jd_text || "暂未填写 JD"}</p></div><button className="icon-button danger" aria-label={`删除 ${position.position_name}`} onClick={async () => { if (confirm(`删除「${position.position_name}」？`)) { await api.deletePosition(position.id); await load(); } }}><X size={16} /></button></article>) : <Empty text="还没有在招岗位。" />}</section>
     <form className="panel position-form" onSubmit={async (event) => { event.preventDefault(); if (!name.trim()) return; await api.setPosition({ position_name: name.trim(), jd_text: jd.trim() }); setName(""); setJd(""); setMessage("岗位已保存。"); await load(); }}><h2>新增或更新岗位</h2><label>岗位名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：商业分析师" required /></label><label>职位描述（JD）<textarea value={jd} onChange={(event) => setJd(event.target.value)} placeholder="填写职责、目标和关键能力" /></label><button className="primary-button"><Plus size={16} />保存岗位</button>{message && <Notice tone="success">{message}</Notice>}</form></div>
   </div>;
 }
@@ -367,6 +366,4 @@ function Loading() { return <div className="loading">正在加载…</div>; }
 function Empty({ text }: { text: string }) { return <div className="empty">{text}</div>; }
 function number(value?: number | null) { return value == null ? "—" : value.toFixed(2); }
 function errorMessage(error: unknown) { return error instanceof Error ? error.message : "请求未完成，请稍后重试。"; }
-function relativeActivity(value?: string | null) { if (!value) return "近期"; const minutes = Math.max(0, Math.round((Date.now() - new Date(value).getTime()) / 60000)); return minutes < 60 ? `${Math.max(1, minutes)} 分钟前` : minutes < 1440 ? `${Math.floor(minutes / 60)} 小时前` : `${Math.floor(minutes / 1440)} 天前`; }
-
 export default App;
