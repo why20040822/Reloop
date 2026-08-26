@@ -9,7 +9,7 @@
     "dev:web": "vite --host 0.0.0.0",
     "build:web": "vite build",
     "check:web": "tsc --noEmit",
-    "test:web": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/sidebar.test.mjs"
+    "test:web": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/*.test.mjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

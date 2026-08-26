@@ -7,6 +7,7 @@ import {
 import { DirectGlassSegment } from "./components/DirectGlassSegment";
 import { api, AUTH_CHANGE_EVENT, config, type CurrentUser, type Interaction, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./lib/sidebar";
+import { scrubTtcCallbackHash } from "./lib/ttcCallback";
 
 const navItems = [
   { to: "/", label: "总览", icon: House, end: true },
@@ -55,7 +56,7 @@ function TtcCallback() {
   const [message, setMessage] = useState("正在自动绑定并同步你的人才库…");
   useEffect(() => {
     const token = new URLSearchParams(location.search).get("token");
-    history.replaceState(null, "", `${location.pathname}#/ttc/callback`);
+    history.replaceState(null, "", scrubTtcCallbackHash(window.location.pathname, window.location.hash));
     if (!token) { setMessage("未收到 TTC 登录凭证，请重新连接人才库。"); return; }
     let stopped = false;
     const bind = async () => {
