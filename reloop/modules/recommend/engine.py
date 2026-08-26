@@ -41,7 +41,7 @@ from reloop.modules.scoring.priority import FactorScores, rank_candidates
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_TOP_SIZES = (10, None)  # None -> 取 .env 的 recommend_top_n
+DEFAULT_TOP_SIZES = (3, 10, None)  # None -> 取 .env 的 recommend_top_n
 
 # 后台精算线程池(独立 DB 会话, 结果落 recommend_runs 供轮询)
 _EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="reloop-reco")

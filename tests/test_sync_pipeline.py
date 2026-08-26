@@ -13,10 +13,14 @@
 
 import os
 import sys
+import time
 
 _TEST_DB = os.path.join(os.path.dirname(__file__), "test_sync.db")
 os.environ["BRAINX_DATABASE_URL"] = f"sqlite:///{_TEST_DB.replace(os.sep, '/')}"
 os.environ["BRAINX_LLM_API_KEY"] = ""  # 强制离线降级
+# 测试环境确定性: 不依赖本机 .env。开发降级模式 + 固定签名密钥(满足启动安全自检)
+os.environ["BRAINX_AUTH_REQUIRE_TOKEN"] = "false"
+os.environ["BRAINX_AUTH_SESSION_SECRET"] = "test-sync-secret"
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -42,10 +46,20 @@ def run() -> int:
     c = TestClient(app)
     H = {"X-Owner-User-Id": OWNER}
 
-    # 1. 走真实 HTTP 同步接口
+    # 1. 走真实 HTTP 同步接口(v4.0 起为异步: 先拿 sync_id, 再轮询进度)
     r = c.post("/sync/ttc/ingest", headers=H, json={"talents": TALENTS})
-    assert r.status_code == 200 and r.json()["synced"] == 3, r.text
-    print("[1] ingest OK: synced=3")
+    assert r.status_code == 200, r.text
+    sync_id = r.json()["sync_id"]
+    deadline = time.time() + 60
+    while True:
+        info = c.get(f"/sync/ttc/status?sync_id={sync_id}", headers=H).json()
+        if info.get("status") in ("done", "failed"):
+            break
+        assert time.time() < deadline, f"同步超时, 最后状态: {info}"
+        time.sleep(0.2)
+    assert info["status"] == "done", f"同步失败: {info.get('message')}"
+    assert "3" in info["message"], f"应同步 3 人, 实际: {info['message']}"
+    print(f"[1] ingest OK: {info['message']}")
 
     # 2. 独立新会话断言【真落库】+ 结构化字段非空
     db = SessionLocal()
@@ -72,15 +86,20 @@ def run() -> int:
     print(f"[3] recommend OK: shortlisted={rec['shortlisted']}, "
           f"scores={sorted(set(scores), reverse=True)} 有区分度")
 
-    # 4. 互动反哺 + 反馈闭环
+    # 4. 互动反哺 + 反馈闭环(v4.0 双因子: 互动应推高 activity 因子)
     tid = rec["top10"][0]["talent_id"]
+    act_before = rec["top10"][0]["score_breakdown"]["activity"]
     assert c.post(f"/talents/{tid}/interaction", headers=H,
                   json={"interaction_type": "call", "count": 2}).status_code == 200
     rec2 = c.post("/recommend/compute?position_name=商业分析师", headers=H).json()
-    assert rec2["top10"][0]["score_breakdown"]["relationship"] > 0.5, "互动未反哺历史关系"
+    after = {it["talent_id"]: it for it in rec2["top10"]}.get(tid)
+    assert after is not None, "互动后该人才掉出 Top10(活跃反哺失效回归!)"
+    assert after["score_breakdown"]["activity"] > act_before, \
+        f"互动未反哺活跃度: {act_before} -> {after['score_breakdown']['activity']}"
     assert c.post("/recommend/feedback", headers=H,
                   json={"talent_id": tid, "action": "confirm"}).json()["ok"]
-    print("[4] interaction+feedback OK: 关系因子随互动升高, 反馈写回成功")
+    print(f"[4] interaction+feedback OK: activity {act_before:.4f} -> "
+          f"{after['score_breakdown']['activity']:.4f}, 反馈写回成功")
 
     print("\n=== 真实同步路径闭环测试通过: HTTP同步 -> 真落库 -> 结构化 -> 推荐区分 -> 反馈 ===")
     return 0
