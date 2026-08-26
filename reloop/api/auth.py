@@ -12,7 +12,7 @@ from reloop.config import settings
 from reloop.db.models import TalentProfile, User
 from reloop.modules.auth.feishu import create_session_token, feishu_auth
 from reloop.modules.auth.ttc import TTCAuthError, build_login_url, validate_token
-from reloop.modules.auth.vault import seal_user_token, unseal_user_token
+from reloop.modules.auth.vault import VaultError, seal_user_token, unseal_user_token
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
@@ -104,12 +104,16 @@ def ttc_callback(request: Request):
 def bind_ttc_account(body: TTCBindBody, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     if user.user_id == settings.guest_owner_id:
         raise HTTPException(status_code=401, detail="请先完成 RE:LOOP 飞书登录，再连接个人人才库")
+    token = body.token.strip()
     try:
-        profile = validate_token(body.token)
+        sealed_token = seal_user_token(token)
+    except VaultError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    try:
+        profile = validate_token(token)
     except TTCAuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    token = body.token.strip()
-    user.ttc_auth_token = seal_user_token(token)
+    user.ttc_auth_token = sealed_token
     if profile["space_id"]:
         user.ttc_space_id = profile["space_id"]
     if profile["display_name"]:

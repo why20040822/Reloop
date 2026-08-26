@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     auth_session_ttl_hours: int = 168
     # OAuth/TTC 登录回跳域名。后端在其下生成固定 provider callback 地址。
     auth_public_base_url: str = ""
-    # 兼容现有加密存储工具；用户级 TTC token 未配置时从 auth_secret 派生密钥。
+    # 加密存储和用户级 TTC token 必须使用独立 Fernet 密钥，禁止从公开默认值派生。
     auth_vault_key: str = ""
     auth_vault_path: str = ".auth/ttc_state.enc"
 

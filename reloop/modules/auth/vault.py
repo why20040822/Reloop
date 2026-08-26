@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import json
 import logging
-import base64
-import hashlib
 from pathlib import Path
 from typing import Optional
 
@@ -45,12 +43,14 @@ def _get_cipher() -> Optional[Fernet]:
 
 
 def _credential_cipher() -> Fernet:
-    """Encrypt database-bound TTC tokens even without a separate vault key."""
+    """Return the explicitly configured cipher for database-bound credentials."""
     explicit = _get_cipher()
-    if explicit is not None:
-        return explicit
-    key = base64.urlsafe_b64encode(hashlib.sha256(settings.auth_secret.encode("utf-8")).digest())
-    return Fernet(key)
+    if explicit is None:
+        raise VaultError(
+            "未配置 BRAINX_AUTH_VAULT_KEY，无法安全保存个人人才库登录态。"
+            "请先生成并配置专用 Fernet 密钥。"
+        )
+    return explicit
 
 
 def seal_user_token(token: str) -> str:

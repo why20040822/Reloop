@@ -4,6 +4,8 @@ import time
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 
 from reloop.api.auth import create_session_token
@@ -11,17 +13,27 @@ from reloop.config import settings
 from reloop.db.engine import SessionLocal, init_db
 from reloop.db.models import User
 from reloop.main import app
-from reloop.modules.auth.vault import seal_user_token, unseal_user_token
+from reloop.modules.auth.vault import VaultError, seal_user_token, unseal_user_token
 from reloop.modules.sync.client import TTCClient, get_sync_progress, talent_sync_service
 
 
-def test_user_token_is_not_saved_in_plaintext():
+def test_user_token_is_not_saved_in_plaintext(monkeypatch):
+    monkeypatch.setattr(settings, "auth_vault_key", Fernet.generate_key().decode("utf-8"))
     raw = "header.payload.signature-for-test"
     encrypted = seal_user_token(raw)
 
     assert encrypted.startswith("v1:")
     assert raw not in encrypted
     assert unseal_user_token(encrypted) == raw
+
+
+def test_user_token_requires_explicit_vault_key(monkeypatch):
+    monkeypatch.setattr(settings, "auth_vault_key", "")
+    monkeypatch.setattr(settings, "auth_session_secret", "")
+    monkeypatch.setattr(settings, "feishu_app_secret", "")
+
+    with pytest.raises(VaultError, match="BRAINX_AUTH_VAULT_KEY"):
+        seal_user_token("must-not-use-the-public-development-secret")
 
 
 def test_ttc_client_uses_real_gateway_paths():
@@ -39,7 +51,8 @@ def test_ttc_client_uses_real_gateway_paths():
     assert seen[1][0].endswith("/api/private-talent/v1/talents")
 
 
-def test_official_callback_binds_user_and_starts_owned_sync():
+def test_official_callback_binds_user_and_starts_owned_sync(monkeypatch):
+    monkeypatch.setattr(settings, "auth_vault_key", Fernet.generate_key().decode("utf-8"))
     init_db()
     user_id = "fs_ttc_flow_test"
     db = SessionLocal()
@@ -70,6 +83,42 @@ def test_official_callback_binds_user_and_starts_owned_sync():
         assert user.ttc_bound_name == "我的 TTC"
         assert user.ttc_auth_token != "a-token-that-is-long-enough-to-be-accepted"
         assert unseal_user_token(user.ttc_auth_token) == "a-token-that-is-long-enough-to-be-accepted"
+    finally:
+        db.close()
+
+
+def test_official_callback_rejects_missing_vault_key_without_writing_or_syncing(monkeypatch):
+    monkeypatch.setattr(settings, "auth_vault_key", "")
+    init_db()
+    user_id = "fs_ttc_vault_missing"
+    db = SessionLocal()
+    try:
+        db.query(User).filter(User.user_id == user_id).delete()
+        db.add(User(user_id=user_id, display_name="测试用户"))
+        db.commit()
+    finally:
+        db.close()
+
+    session_token = create_session_token(user_id)
+    with TestClient(app) as client, \
+            patch("reloop.api.auth.validate_token", return_value={"space_id": "U-own", "display_name": "我的 TTC"}) as validate, \
+            patch("reloop.modules.sync.client.talent_sync_service.sync_for_user_async") as sync:
+        result = client.post(
+            "/auth/ttc/bind",
+            headers={"X-Auth-Token": session_token},
+            json={"token": "a-token-that-is-long-enough-to-be-accepted"},
+        )
+
+    assert result.status_code == 503
+    assert "BRAINX_AUTH_VAULT_KEY" in result.json()["detail"]
+    validate.assert_not_called()
+    sync.assert_not_called()
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter(User.user_id == user_id).one()
+        assert user.ttc_auth_token is None
+        assert user.ttc_space_id is None
+        assert user.ttc_bound_name is None
     finally:
         db.close()
 

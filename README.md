@@ -251,6 +251,11 @@ HTTPS 工作台根地址，例如 `https://reloop.example.com`。服务端据此
 不返回给浏览器，也不会回退到访客共享凭据。示例文件只保留占位符，不能填写或提交真实
 Token、会话密钥或数据库密码。
 
+连接个人 TTC 人才库前必须配置独立的 `BRAINX_AUTH_VAULT_KEY`。该值必须是 Fernet
+密钥，可用 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+生成；缺失或格式无效时，后端会拒绝保存个人登录态并返回 `503`，不会从开发默认字符串
+或其他公开配置派生加密密钥。
+
 ### JD 解析与岗位匹配
 
 `POST /positions/parse-jd` 接受非空且不超过 50,000 个字符的 `jd_text`，仅返回可编辑的
