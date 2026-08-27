@@ -150,7 +150,7 @@ class TTCClient:
         last_resp, last_exc = None, None
         for attempt in range(max_retries):
             try:
-                resp = httpx.get(url, params=params, headers=headers, timeout=30)
+                resp = httpx.get(url, params=params, headers=headers, timeout=30, follow_redirects=True)
                 if resp.status_code < 500:
                     return resp
                 last_resp = resp
