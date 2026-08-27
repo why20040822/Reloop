@@ -43,3 +43,6 @@ extract_docx.py
 
 # ECS 部署快照(含环境备份/tar 包, 禁止提交)
 .workbuddy/ecs_deploy_snapshot/
+
+# 团队私密文档(含凭据, 禁止入库)
+hanyu接下来的文档/
