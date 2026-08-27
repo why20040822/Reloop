@@ -34,10 +34,11 @@ from reloop.modules.auth.feishu import decode_ttc_jwt_unverified
 
 logger = logging.getLogger(__name__)
 
-_SESSION_TTL = 360          # 登录会话最长存活(秒): pending 超时 + success 结果保留
-_PENDING_TIMEOUT = 240      # 单个 pending 会话等待扫码的最长时间(秒)
+_SESSION_TTL = 600          # 登录会话最长存活(秒): pending 超时 + success 结果保留
+_PENDING_TIMEOUT = 360      # 单个 pending 会话等待扫码的最长时间(秒)
 _QR_REFRESH_INTERVAL = 1.0  # 二维码截图刷新间隔(秒)
-_TOKEN_LS_KEYS = ("access_token", "token", "Authorization",
+_TOKEN_LS_KEYS = ("ottin-jwt-token-v2",   # TTC 真实键(2026-08-27 从其授权页 chunk 确认)
+                  "access_token", "token", "Authorization",
                   "authorization", "accessToken", "auth_token")
 
 _session_lock = threading.Lock()
@@ -55,6 +56,7 @@ class AutoLoginSession:
     space_id: str = ""
     bound_name: str = ""
     error: str = ""
+    hint: str = ""                    # 过程提示(如"已扫码, 正在抓取登录态")
     started_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -103,32 +105,58 @@ def get_session(sid: str) -> Optional[AutoLoginSession]:
 # ---------------------------------------------------------------------
 def _apply_stealth(page) -> None:
     try:
-        from playwright_stealth import stealth_sync  # type: ignore
-        stealth_sync(page)
+        from playwright_stealth import Stealth  # type: ignore
+        Stealth().apply_stealth_sync(page)
     except Exception as e:  # noqa: BLE001
         logger.warning("[autologin] stealth 未生效: %s", e)
 
 
+def _looks_like_jwt(s: str) -> bool:
+    """TTC Bearer 为自签 HS256 JWT(三段 base64url, ~850 字符)。"""
+    s = s.strip()
+    if len(s) < 60 or s.count(".") < 2:
+        return False
+    return all(part and all(c.isalnum() or c in "-_=" for c in part) for part in s.split("."))
+
+
 def _extract_token_from_ls(page) -> str:
-    """从 localStorage 常见键里找 Bearer Token(兜底)。"""
+    """扫描 localStorage 全部键值, 找 JWT 形态的值(不限键名)。"""
     try:
-        ls = page.evaluate(
-            """(ks) => {
-                const out = {};
-                for (const k of ks) { const v = localStorage.getItem(k); if (v) out[k] = v; }
+        entries = page.evaluate(
+            """() => {
+                const out = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    out.push([k, localStorage.getItem(k)]);
+                }
                 return out;
-            }""",
-            list(_TOKEN_LS_KEYS),
+            }"""
         )
     except Exception:  # noqa: BLE001
         return ""
-    for v in (ls or {}).values():
-        s = str(v).strip()
+    for _k, v in (entries or []):
+        s = str(v or "").strip()
         if s.lower().startswith("bearer "):
             s = s[7:].strip()
-        # TTC JWT 一般 3 段且较长
-        if len(s) > 60 and s.count(".") >= 2:
+        if _looks_like_jwt(s):
             return s
+    return ""
+
+
+def _extract_token_from_json(payload) -> str:
+    """递归扫描 JSON(登录/换 token 接口的响应), 找 JWT 形态的值。"""
+    if isinstance(payload, dict):
+        for v in payload.values():
+            t = _extract_token_from_json(v)
+            if t:
+                return t
+    elif isinstance(payload, list):
+        for v in payload:
+            t = _extract_token_from_json(v)
+            if t:
+                return t
+    elif isinstance(payload, str) and _looks_like_jwt(payload):
+        return payload
     return ""
 
 
@@ -166,10 +194,27 @@ def _run_login_thread(sid: str) -> None:
                 auth = req.headers.get("authorization", "")
                 if auth.lower().startswith("bearer "):
                     tok = auth[7:].strip()
-                    if len(tok) > 60 and tok.count(".") >= 2:
+                    if _looks_like_jwt(tok):
                         found["token"] = tok
 
+            def on_response(resp):
+                # 登录/换 token 接口的响应体里也含 JWT(第三通道)
+                if found.get("token"):
+                    return
+                try:
+                    ctype = resp.headers.get("content-type", "")
+                    if "json" not in ctype:
+                        return
+                    tok = _extract_token_from_json(resp.json())
+                    if tok:
+                        found["token"] = tok
+                        logger.info("[autologin] sid=%s token from response %s",
+                                    sid, resp.url[:100])
+                except Exception:  # noqa: BLE001
+                    pass
+
             page.on("request", on_request)
+            page.on("response", on_response)
             page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
             try:
                 page.wait_for_load_state("load", timeout=8000)
@@ -211,6 +256,7 @@ def _run_login_thread(sid: str) -> None:
                 logger.info("[autologin] 未跳到 open.feishu.cn, 当前 url=%s", page.url[:120])
 
             deadline = time.time() + _PENDING_TIMEOUT
+            _dbg_last = {"url": "", "keys": ""}
             while time.time() < deadline:
                 # 1) 网络头
                 if not found.get("token"):
@@ -223,7 +269,39 @@ def _run_login_thread(sid: str) -> None:
                     t = _extract_token_from_ls(page)
                     if t:
                         found["token"] = t
-                # 3) 刷新截图(二维码/进度)
+                # 3) 诊断: 页面 url/title/LS 键变化时打日志(排查抓取失败)
+                try:
+                    cur_url = page.url
+                    if cur_url != _dbg_last["url"]:
+                        _dbg_last["url"] = cur_url
+                        logger.info("[autologin] sid=%s page -> %s | title=%s",
+                                    sid, cur_url[:150], (page.title() or "")[:40])
+                    ls_keys = page.evaluate("() => Object.keys(localStorage).join(',')")
+                    if ls_keys != _dbg_last["keys"]:
+                        _dbg_last["keys"] = ls_keys
+                        logger.info("[autologin] sid=%s localStorage keys: %s", sid, (ls_keys or "(empty)")[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+                # 4) 飞书授权确认页(扫码后网页端还需再点一次"同意授权") -> 自动点击
+                try:
+                    if "authen/v1/index" in page.url or "authorization" in (page.title() or "").lower():
+                        btns = page.locator("button:visible, div[role='button']:visible, a:visible[href]")
+                        for i in range(min(btns.count(), 8)):
+                            b = btns.nth(i)
+                            try:
+                                txt = (b.text_content() or "").strip().lower()
+                                if txt and any(k in txt for k in ("同意", "授权", "允许", "allow", "authorize", "confirm", "accept")):
+                                    b.click(timeout=2000)
+                                    logger.info("[autologin] sid=%s 已点击授权确认: %r", sid, txt[:20])
+                                    break
+                            except Exception:  # noqa: BLE001
+                                continue
+                except Exception:  # noqa: BLE001
+                    pass
+                # 5) 页面已离开飞书扫码页(用户已扫码确认, 正在回跳) -> 过程提示
+                if not found.get("token") and "ttcadvisory.com" in page.url:
+                    sess.hint = "已扫码, 正在抓取登录态…"
+                # 5) 刷新截图(二维码/进度)
                 try:
                     sess.qr_png = page.screenshot(type="png")
                     sess.touch()
@@ -262,7 +340,15 @@ def _run_login_thread(sid: str) -> None:
             sess.status = "failed"
             sess.error = "Reloop 用户不存在, 请先登录"
         else:
-            user.ttc_auth_token = token
+            # Token 加密落库(Fernet vault, 与 /auth/ttc/bind 同一标准); 未配 vault key 拒绝明文
+            from reloop.modules.auth.vault import VaultError, seal_user_token
+            try:
+                user.ttc_auth_token = seal_user_token(token)
+            except VaultError as e:
+                sess.status = "failed"
+                sess.error = str(e)
+                sess.touch()
+                return
             if sess.bound_name:
                 user.ttc_bound_name = sess.bound_name
             if sess.space_id:
@@ -271,11 +357,13 @@ def _run_login_thread(sid: str) -> None:
             sess.status = "success"
             logger.info("[autologin] sid=%s user=%s bound=%s space=%s",
                         sid, sess.user_id, sess.bound_name, sess.space_id)
-            # 自动触发同步(后台 sync_jobs)
+            # 自动触发同步(异步后台, 与 bind 接口同一入口)
             from reloop.modules.sync.client import talent_sync_service
-            talent_sync_service.start_sync(
-                db, sess.user_id, space_id=sess.space_id or None,
+            talent_sync_service.sync_for_user_async(
+                sess.user_id,
+                space_id=sess.space_id or None,
                 auth_token=token or None,
+                source="owned",
             )
     except Exception as e:  # noqa: BLE001
         logger.exception("[autologin] bind failed sid=%s", sid)

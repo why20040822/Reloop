@@ -124,6 +124,43 @@ def bind_ttc_account(body: TTCBindBody, db: Session = Depends(get_db), user: Use
     return {"ok": True, "sync_id": sync_id, "display_name": user.ttc_bound_name or user.display_name, "space_id": user.ttc_space_id}
 
 
+@router.post("/ttc/auto-login", summary="一键扫码绑定: 创建自动登录会话(Playwright 抓 Token)")
+def ttc_auto_login(user: User = Depends(get_current_user)):
+    """零复制粘贴通道: 后台无头浏览器打开 TTC 登录页, 前端轮询拿二维码给用户扫。
+
+    与官方授权页通道(/ttc/login-url)互补: 该通道驱动 TTC 站点自身登录流程,
+    不受其回调域名白名单限制。进程内会话管理 -> 必须单 worker 部署。
+    """
+    if user.user_id == settings.guest_owner_id:
+        raise HTTPException(status_code=401, detail="请先完成 RE:LOOP 飞书登录，再连接个人人才库")
+    from reloop.modules.auth.auto_login import start_session
+    sess = start_session(user.user_id)
+    return {"sid": sess.sid, "status": sess.status}
+
+
+@router.get("/ttc/auto-login/{sid}/status", summary="轮询自动登录状态(含二维码截图 base64)")
+def ttc_auto_login_status(sid: str, user: User = Depends(get_current_user)):
+    """返回 {status, qr_png_b64, error, bound_name, space_id}。
+
+    status: pending(扫码中, qr_png_b64 为当前页面截图) / success / failed / timeout / expired。
+    """
+    if user.user_id == settings.guest_owner_id:
+        raise HTTPException(status_code=401, detail="请先完成 RE:LOOP 飞书登录，再连接个人人才库")
+    from reloop.modules.auth.auto_login import get_session
+    sess = get_session(sid)
+    if sess is None or sess.user_id != user.user_id:
+        raise HTTPException(status_code=404, detail="登录会话不存在或已过期, 请重新发起")
+    import base64
+    return {
+        "status": sess.status,
+        "qr_png_b64": base64.b64encode(sess.qr_png).decode() if sess.qr_png else "",
+        "error": sess.error,
+        "hint": sess.hint,
+        "bound_name": sess.bound_name,
+        "space_id": sess.space_id,
+    }
+
+
 @router.get("/me", summary="当前登录用户信息(含人才池规模)")
 def me(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     pool_count = db.query(TalentProfile).filter(TalentProfile.owner_user_id == user.user_id).count()

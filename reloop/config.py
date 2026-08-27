@@ -86,6 +86,9 @@ class Settings(BaseSettings):
     auth_session_ttl_hours: int = 168
     # OAuth/TTC 登录回跳域名。后端在其下生成固定 provider callback 地址。
     auth_public_base_url: str = ""
+    # TTC 一键扫码自动绑定(Playwright 无头登录抓 Token): TTC 站点登录页地址。
+    # 该通道驱动 TTC 站点自身登录流程, 不经官方授权页, 不受其回调白名单限制。
+    auth_login_url: str = "https://app.ttcadvisory.com/"
     # 加密存储和用户级 TTC token 必须使用独立 Fernet 密钥，禁止从公开默认值派生。
     auth_vault_key: str = ""
     auth_vault_path: str = ".auth/ttc_state.enc"
