@@ -11,10 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 MAX_JD_IMAGES = 4
 MAX_JD_IMAGE_BYTES = 8 * 1024 * 1024
-# DeepSeek accepts image sides up to 8192. Cap decoded pixels at 8 MP so one
-# image stays within a modest decode allocation even when four are submitted.
+# DeepSeek accepts image sides up to 8192. Cap decoded pixels at 40 MP to
+# support standard 4K screenshots while bounding each image decode.
 MAX_JD_IMAGE_SIDE = 8192
-MAX_JD_IMAGE_PIXELS = 8_000_000
+MAX_JD_IMAGE_PIXELS = 40_000_000
 _DATA_IMAGE_URL = re.compile(r"^data:(image/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/]*={0,2})$")
 
 
@@ -99,9 +99,11 @@ class JDAnalysis(BaseModel):
 
     @field_validator("company_name", mode="before")
     @classmethod
-    def normalize_company_name(cls, value: str | None) -> str | None:
+    def normalize_company_name(cls, value: object) -> object:
         if value is None:
             return None
+        if not isinstance(value, str):
+            return value
         return value.strip() or None
 
     @field_validator(

@@ -67,6 +67,40 @@ def oversized_dimension_png_data_url() -> str:
     return "data:image/png;base64," + base64.b64encode(image).decode()
 
 
+def grayscale_png_data_url(width: int, height: int) -> str:
+    def chunk(kind: bytes, content: bytes) -> bytes:
+        body = kind + content
+        return struct.pack(">I", len(content)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    row = b"\x00" + (b"\x00" * width)
+    image = b"".join(
+        [
+            b"\x89PNG\r\n\x1a\n",
+            chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)),
+            chunk(b"IDAT", zlib.compress(row * height)),
+            chunk(b"IEND", b""),
+        ]
+    )
+    return "data:image/png;base64," + base64.b64encode(image).decode()
+
+
+def declared_pixel_limit_png_data_url() -> str:
+    width, height = 8000, 5001
+
+    def chunk(kind: bytes, content: bytes) -> bytes:
+        body = kind + content
+        return struct.pack(">I", len(content)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    image = b"".join(
+        [
+            b"\x89PNG\r\n\x1a\n",
+            chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)),
+            chunk(b"IEND", b""),
+        ]
+    )
+    return "data:image/png;base64," + base64.b64encode(image).decode()
+
+
 @pytest.fixture
 def owner(monkeypatch):
     monkeypatch.setattr(settings, "auth_allow_guest", False)
@@ -192,6 +226,24 @@ def test_parser_routes_text_to_flash_and_returns_submitted_source_text():
     assert result.source_text == "文本职位描述"
 
 
+def test_parser_normalizes_non_string_company_to_jd_parser_error():
+    invalid_response = copy.deepcopy(VALID_PARSE_RESPONSE)
+    invalid_response["analysis"]["company_name"] = {"unexpected": "object"}
+    parser = DeepSeekJDParser(
+        api_key="test-key",
+        transport=httpx.MockTransport(
+            lambda request: httpx.Response(
+                200,
+                json={"choices": [{"message": {"content": json.dumps(invalid_response)}}]},
+                request=request,
+            )
+        ),
+    )
+
+    with pytest.raises(JDParserError):
+        parser.parse("职位描述")
+
+
 def test_parser_routes_images_to_vision_with_official_image_url_blocks():
     seen_payload = {}
 
@@ -254,6 +306,33 @@ def test_parse_endpoint_rejects_excessive_image_dimensions_before_parser_or_writ
             "/positions/parse-jd",
             headers=strict_parse_headers,
             json={"jd_text": "", "images": [oversized_dimension_png_data_url()]},
+        )
+
+    assert response.status_code == 422
+    assert database_counts() == before
+
+
+def test_parse_request_accepts_complete_standard_4k_png():
+    request = JDParseRequest.model_validate(
+        {"jd_text": "", "images": [grayscale_png_data_url(3840, 2160)]}
+    )
+
+    assert request.images
+
+
+def test_parse_endpoint_rejects_over_40_megapixel_image_before_parser_or_writes(
+    strict_parse_headers, monkeypatch
+):
+    def fail_if_parser_called(*args, **kwargs):
+        raise AssertionError("image validation must reject before parser invocation")
+
+    monkeypatch.setattr(DeepSeekJDParser, "parse", fail_if_parser_called)
+    before = database_counts()
+    with TestClient(app) as client:
+        response = client.post(
+            "/positions/parse-jd",
+            headers=strict_parse_headers,
+            json={"jd_text": "", "images": [declared_pixel_limit_png_data_url()]},
         )
 
     assert response.status_code == 422
