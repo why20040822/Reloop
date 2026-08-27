@@ -81,6 +81,36 @@ test("browser-local DeepSeek key is isolated from config and never crosses origi
   assert.equal(storage.get("reloop.deepseekApiKey"), undefined);
 });
 
+test("mock position adapter replaces the referenced row without persisting transport metadata", async () => {
+  installBrowser();
+  const { api, config } = await import(`../frontend/src/lib/api.ts?mock-position-replacement=${Date.now()}`);
+  config.write({ mode: "mock" });
+
+  const [original] = await api.listPositions();
+  const replacement = await api.setPosition({
+    position_name: "AI 增长产品负责人（演示）",
+    company_name: original.company_name,
+    jd_text: "重命名后的演示 JD",
+    jd_analysis: original.jd_analysis ? { ...original.jd_analysis, title: "AI 增长产品负责人（演示）" } : null,
+    replacement_position_id: original.id,
+  });
+  const afterReplacement = await api.listPositions();
+
+  assert.equal(afterReplacement.some((position) => position.id === original.id), false);
+  assert.deepEqual(afterReplacement.map((position) => position.id), [replacement.id]);
+  assert.equal(findPositionById(afterReplacement, replacement.id), replacement);
+  assert.equal(Object.hasOwn(replacement, "replacement_position_id"), false);
+
+  const updated = await api.setPosition({
+    position_name: replacement.position_name,
+    company_name: replacement.company_name,
+    jd_text: "同一身份更新后的演示 JD",
+    jd_analysis: replacement.jd_analysis,
+  });
+  assert.equal(updated.id, replacement.id);
+  assert.deepEqual((await api.listPositions()).map((position) => position.id), [replacement.id]);
+});
+
 test("JD input can parse text or images and image state merges/removes without stale reintroduction", () => {
   const image = (name, type = "image/png", size = 1024) => ({ name, type, size });
   assert.equal(MAX_JD_IMAGES, 4);

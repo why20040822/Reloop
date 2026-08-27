@@ -229,9 +229,13 @@ export const api = {
   },
   async setPosition(body: Pick<Position, "position_name" | "company_name" | "jd_text" | "jd_analysis"> & { replacement_position_id?: number }) {
     if (isMock()) {
-      const found = mockPositions.find((item) => item.position_name === body.position_name && item.company_name === body.company_name);
-      if (found) return Object.assign(found, body);
-      const created = { id: Date.now(), ...body, is_active: true };
+      const { replacement_position_id: replacementId, ...positionBody } = body;
+      const found = mockPositions.find((item) => item.position_name === positionBody.position_name && item.company_name === positionBody.company_name);
+      if (replacementId != null && replacementId !== found?.id) {
+        mockPositions = mockPositions.filter((item) => item.id !== replacementId);
+      }
+      if (found) return Object.assign(found, positionBody);
+      const created = { id: Date.now(), ...positionBody, is_active: true };
       mockPositions = [created, ...mockPositions];
       return created;
     }
