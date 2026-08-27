@@ -14,3 +14,4 @@ dependencies:
       - pydantic-settings>=2.2
       - python-dotenv>=1.0
       - httpx>=0.27
+      - Pillow>=10.0

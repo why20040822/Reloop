@@ -16,6 +16,7 @@ from reloop.modules.positions.jd_parser import DeepSeekJDParser, build_jd_messag
 from reloop.modules.recommend.engine import RecommendEngine, recommend_engine
 from reloop.modules.profile.llm import llm_service
 from reloop.schemas.jd import JDAnalysis
+from reloop.schemas.talent import PositionCreate
 
 
 VALID_ANALYSIS = {
@@ -119,6 +120,51 @@ def test_position_blank_company_is_normalized_and_overrides_parsed_company(owner
         assert saved.jd_analysis["company_name"] is None
     finally:
         db.close()
+
+
+def test_position_title_whitespace_replaces_same_company_position(owner):
+    with TestClient(app) as client:
+        original = _create_position(
+            client, owner, position_name="  产品负责人  ", company_name="远景科技", jd_text="v1"
+        )
+        replacement = _create_position(
+            client, owner, position_name="产品负责人", company_name="远景科技", jd_text="v2"
+        )
+        active = client.get("/positions", headers=owner).json()
+
+    assert replacement["position_name"] == "产品负责人"
+    assert [position["id"] for position in active] == [replacement["id"]]
+    db = SessionLocal()
+    try:
+        assert db.get(Position, original["id"]).is_active == 0
+    finally:
+        db.close()
+
+
+def test_position_rejects_blank_title(owner):
+    with TestClient(app) as client:
+        response = client.post(
+            "/positions",
+            headers=owner,
+            json={"position_name": "   ", "company_name": "远景科技"},
+        )
+
+    assert response.status_code == 422
+    db = SessionLocal()
+    try:
+        assert db.query(Position).count() == 0
+    finally:
+        db.close()
+
+
+def test_parsed_and_submitted_company_names_reject_values_over_128_characters():
+    analysis = copy.deepcopy(VALID_ANALYSIS)
+    analysis["company_name"] = "x" * 129
+
+    with pytest.raises(ValueError):
+        JDAnalysis.model_validate(analysis)
+    with pytest.raises(ValueError):
+        PositionCreate.model_validate({"position_name": "产品负责人", "company_name": "x" * 129})
 
 
 def test_same_company_replaces_only_that_company_position(owner):

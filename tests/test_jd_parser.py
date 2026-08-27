@@ -44,7 +44,7 @@ VALID_PARSE_RESPONSE = {
     "analysis": VALID_ANALYSIS,
     "source_text": "从图片转写出的职位描述",
 }
-IMAGE_DATA_URL = "data:image/png;base64,iVBORw0KGgo="
+IMAGE_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
 
 
 @pytest.fixture
@@ -219,6 +219,20 @@ def test_parse_request_rejects_invalid_image_data_without_writes(strict_parse_he
     assert unsupported.status_code == 422
     assert too_large.status_code == 422
     assert database_counts() == before
+
+
+@pytest.mark.parametrize(
+    "data_url",
+    [
+        "data:image/jpeg;base64,/9j/4AA=",
+        "data:image/png;base64,iVBORw0KGgo=",
+        "data:image/gif;base64,R0lGODlh",
+        "data:image/webp;base64,UklGRgQAAABXRUJQ",
+    ],
+)
+def test_parse_request_rejects_truncated_images_with_valid_signatures(data_url):
+    with pytest.raises(ValidationError):
+        JDParseRequest.model_validate({"jd_text": "", "images": [data_url]})
 
 
 def test_parse_request_accepts_image_only_and_limits_four_images():

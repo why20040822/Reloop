@@ -53,10 +53,18 @@ class InteractionCreate(BaseModel):
 
 # ---------- 岗位设定 ----------
 class PositionCreate(BaseModel):
-    position_name: str = Field(..., description="岗位名, 如: HRBP")
-    company_name: Optional[str] = None
+    position_name: str = Field(..., max_length=128, description="岗位名, 如: HRBP")
+    company_name: Optional[str] = Field(default=None, max_length=128)
     jd_text: Optional[str] = None
     jd_analysis: Optional[JDAnalysis] = None
+
+    @field_validator("position_name")
+    @classmethod
+    def normalize_position_name(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("岗位名不能为空")
+        return cleaned
 
     @field_validator("company_name")
     @classmethod

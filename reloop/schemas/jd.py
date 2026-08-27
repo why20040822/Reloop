@@ -1,8 +1,10 @@
 """Validated contracts for raw and structured job descriptions."""
 
 import base64
+from io import BytesIO
 import re
 
+from PIL import Image, UnidentifiedImageError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -34,6 +36,13 @@ def _validate_image_data_url(value: str) -> str:
     }
     if not valid_signatures[media_type]:
         raise ValueError("图片内容与 data URL 类型不匹配")
+    try:
+        with Image.open(BytesIO(decoded)) as image:
+            image.verify()
+        with Image.open(BytesIO(decoded)) as image:
+            image.load()
+    except (OSError, SyntaxError, UnidentifiedImageError, ValueError) as exc:
+        raise ValueError("图片数据不完整或已损坏") from exc
     return value
 
 
@@ -55,7 +64,7 @@ class JDAnalysis(BaseModel):
     team_size: str = Field(min_length=1)
     reporting_line: str = Field(min_length=1)
     language_requirements: list[str] = Field(min_length=1)
-    company_name: str | None = None
+    company_name: str | None = Field(default=None, max_length=128)
 
     @field_validator(
         "title",
