@@ -2,9 +2,26 @@
   "name": "reloop-cockpit",
   "version": "0.1.0",
   "private": true,
-  "description": "Reloop 触达工作台前端 (静态 SPA), 配套 Reloop FastAPI 推荐引擎。",
+  "description": "Reloop React + Vite 触达工作台，配套 Reloop FastAPI 推荐引擎。",
   "scripts": {
     "dev": "node server.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "dev:web": "vite --host 0.0.0.0",
+    "build:web": "vite build",
+    "check:web": "tsc --noEmit",
+    "test:web": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.28.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "typescript": "^5.7.2",
+    "vite": "^5.4.10"
   }
 }

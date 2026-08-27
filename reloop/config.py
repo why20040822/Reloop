@@ -70,6 +70,12 @@ class Settings(BaseSettings):
     llm_embedding_model: str = "text-embedding-v3"
     llm_timeout: int = 30
 
+    # ---------- DeepSeek JD 解析 (仅后端使用) ----------
+    deepseek_api_key: str = ""
+    deepseek_base_url: str = "https://api.deepseek.com"
+    deepseek_model: str = "deepseek-chat"
+    deepseek_timeout_seconds: float = 30
+
     # ---------- 飞书扫码登录 ----------
     # 自建飞书应用凭证(开放平台-凭证与基础信息)。未配置时 /auth/feishu/* 返回未启用。
     feishu_app_id: str = ""
@@ -78,14 +84,23 @@ class Settings(BaseSettings):
     auth_session_secret: str = ""
     # 登录态有效期(小时), 默认 7 天
     auth_session_ttl_hours: int = 168
+    # OAuth/TTC 登录回跳域名。后端在其下生成固定 provider callback 地址。
+    auth_public_base_url: str = ""
+    # 加密存储和用户级 TTC token 必须使用独立 Fernet 密钥，禁止从公开默认值派生。
+    auth_vault_key: str = ""
+    auth_vault_path: str = ".auth/ttc_state.enc"
 
     # ---------- TTC 私域人才库 (数据源) ----------
     ttc_talent_base_url: str = "https://app.ttcadvisory.com"
+    ttc_talent_api_base_url: str = "https://gateway.ttcadvisory.com"
+    ttc_authorize_url: str = "https://gateway.ttcadvisory.com/auth/authorize"
     ttc_talent_space_id: str = "U2034543869059211264"
     # 站点需飞书登录, 抓取接口需带登录态; 填写后 client 才会真正拉取
     ttc_talent_auth_token: str = ""
+    # Service-owned token for the guest shared pool. Personal users never fall back to it.
+    ttc_shared_auth_token: str = ""
     # 列表接口路径(按站点真实 XHR 补全)
-    ttc_talent_api_path: str = "/api/talents"
+    ttc_talent_api_path: str = "/api/private-talent/v1"
 
     # ---------- 推荐结果缓存(性能核心) ----------
     # 同一(owner+岗位+JD+数据版本)命中缓存直接返回最终结果, 不再重算。

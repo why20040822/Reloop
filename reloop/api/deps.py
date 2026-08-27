@@ -9,6 +9,7 @@ import logging
 from typing import Optional
 
 from fastapi import Depends, Header, HTTPException, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from reloop.config import settings
@@ -17,6 +18,21 @@ from reloop.db.models import User
 from reloop.modules.auth.feishu import verify_session_token
 
 logger = logging.getLogger(__name__)
+
+
+def _create_user_or_get_concurrent_winner(db: Session, user_id: str, display_name: str | None = None) -> User:
+    user = User(user_id=user_id, display_name=display_name)
+    db.add(user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        winner = db.query(User).filter(User.user_id == user_id).first()
+        if winner is None:
+            raise
+        return winner
+    db.refresh(user)
+    return user
 
 
 def get_current_user(
@@ -38,14 +54,10 @@ def get_current_user(
             user = db.query(User).filter(User.user_id == user_id).first()
             if user is not None:
                 return user
-        # Token 无效/过期/用户不存在: 如果允许访客则静默回退，避免前端闪退
-        if settings.auth_allow_guest:
-            logger.info("[auth] token invalid/expired, falling back to guest")
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="登录态无效或已过期, 请重新扫码登录",
-            )
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录态无效或已过期, 请重新扫码登录",
+        )
 
     # 2. 开发期 fallback: X-Owner-User-Id(仅 auth_require_token=False;
     #    须先于访客分支, 否则默认开访客时该隔离键恒失效)
@@ -57,10 +69,7 @@ def get_current_user(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="用户未注册(auth_auto_register=False)",
                 )
-            user = User(user_id=x_owner_user_id)
-            db.add(user)
-            db.commit()
-            db.refresh(user)
+            user = _create_user_or_get_concurrent_winner(db, x_owner_user_id)
             logger.info("[auth] auto-registered user=%s", x_owner_user_id)
         return user
 
@@ -68,10 +77,7 @@ def get_current_user(
     if settings.auth_allow_guest:
         user = db.query(User).filter(User.user_id == settings.guest_owner_id).first()
         if user is None:
-            user = User(user_id=settings.guest_owner_id, display_name="访客")
-            db.add(user)
-            db.commit()
-            db.refresh(user)
+            user = _create_user_or_get_concurrent_winner(db, settings.guest_owner_id, "访客")
         return user
 
     # 4. 都不放行 -> 401
@@ -99,3 +105,32 @@ def get_optional_user(
 def owner_user_id(user: User = Depends(get_current_user)) -> str:
     """便捷依赖: 直接返回隔离键。"""
     return user.user_id
+
+
+def require_authenticated_non_guest_user(
+    db: Session = Depends(get_db),
+    x_auth_token: Optional[str] = Header(default=None, alias="X-Auth-Token"),
+) -> User:
+    """Require an existing signed-in user without guest or development fallbacks.
+
+    Parse previews may submit sensitive raw JD text. This dependency intentionally
+    performs no registration or guest provisioning and ignores X-Owner-User-Id.
+    """
+    if not x_auth_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="需要有效登录态",
+        )
+    user_id = verify_session_token(x_auth_token)
+    if not user_id or user_id == settings.guest_owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录态无效或已过期, 请重新扫码登录",
+        )
+    user = db.query(User).filter(User.user_id == user_id).first()
+    if user is None or user.user_id == settings.guest_owner_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录态无效或已过期, 请重新扫码登录",
+        )
+    return user

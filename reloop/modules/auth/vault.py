@@ -42,6 +42,38 @@ def _get_cipher() -> Optional[Fernet]:
         ) from e
 
 
+def _credential_cipher() -> Fernet:
+    """Return the explicitly configured cipher for database-bound credentials."""
+    explicit = _get_cipher()
+    if explicit is None:
+        raise VaultError(
+            "未配置 BRAINX_AUTH_VAULT_KEY，无法安全保存个人人才库登录态。"
+            "请先生成并配置专用 Fernet 密钥。"
+        )
+    return explicit
+
+
+def seal_user_token(token: str) -> str:
+    """Return a versioned encrypted value for a user-owned TTC token."""
+    cipher = _credential_cipher()
+    if not token:
+        return ""
+    return "v1:" + cipher.encrypt(token.encode("utf-8")).decode("utf-8")
+
+
+def unseal_user_token(value: str | None) -> str:
+    """Read a versioned user-owned token and reject unsafe legacy plaintext."""
+    raw = (value or "").strip()
+    if not raw:
+        return ""
+    if not raw.startswith("v1:"):
+        raise VaultError("已保存的人才库登录态格式已失效，请重新登录飞书")
+    try:
+        return _credential_cipher().decrypt(raw[3:].encode("utf-8")).decode("utf-8")
+    except InvalidToken as e:
+        raise VaultError("已保存的人才库登录态无法解密，请重新登录飞书") from e
+
+
 def _vault_path() -> Path:
     return Path(settings.auth_vault_path)
 

@@ -3,7 +3,9 @@
 import datetime as dt
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+
+from reloop.schemas.jd import JDAnalysis
 
 
 # ---------- 用户/人才 ----------
@@ -53,12 +55,21 @@ class InteractionCreate(BaseModel):
 class PositionCreate(BaseModel):
     position_name: str = Field(..., description="岗位名, 如: HRBP")
     jd_text: Optional[str] = None
+    jd_analysis: Optional[JDAnalysis] = None
+
+    @model_validator(mode="after")
+    def structured_jd_requires_raw_jd(self) -> "PositionCreate":
+        if self.jd_analysis is not None and not (self.jd_text or "").strip():
+            raise ValueError("结构化 JD 必须同时保存非空的原始 JD")
+        return self
 
 
 class PositionOut(BaseModel):
     id: int
     position_name: str
     jd_text: Optional[str] = None
+    jd_analysis: Optional[JDAnalysis] = None
+    jd_analysis_version: Optional[str] = None
     is_active: bool
 
     class Config:

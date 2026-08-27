@@ -75,6 +75,7 @@ def _ensure_columns() -> None:
       - v4.1: talent_profiles.contact_phone/contact_email/seek_status/
               current_salary/expected_salary/target_positions/education_history/contact_status
               (对齐 TTC 真实接口字段 + 备注: 收藏/联系状态/备注语句)
+      - v4.2: positions.jd_analysis/jd_analysis_version(结构化 JD 解析结果)
     """
     from sqlalchemy import inspect, text
 
@@ -101,6 +102,10 @@ def _ensure_columns() -> None:
             ("education_history", "JSON NULL"),
             ("contact_status", "VARCHAR(32) NULL"),
         ],
+        "positions": [
+            ("jd_analysis", "JSON NULL"),
+            ("jd_analysis_version", "VARCHAR(32) NULL"),
+        ],
     }
     insp = inspect(engine)
     with engine.begin() as conn:
@@ -124,4 +129,3 @@ def _ensure_columns() -> None:
                     if has:
                         continue
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_ddl}"))
-

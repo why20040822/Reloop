@@ -31,6 +31,7 @@ dist/
 *.log
 logs/
 reloop_cache/
+.auth/
 
 # 测试 / 覆盖率
 .pytest_cache/

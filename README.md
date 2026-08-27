@@ -2,7 +2,7 @@
 
 > 今天你最应该联系谁,以及为什么。
 
-Reloop 从 TTC 私域人才库拉取人才数据，结构化入库（阿里云 RDS MySQL），通过「活跃度 × 岗位匹配度」双指标为候选人排序，帮助顾问找出最值得优先触达的人。
+Reloop 按访问身份从 TTC 共享池或用户个人库拉取人才数据，结构化入库（阿里云 RDS MySQL），通过「活跃度 × 岗位匹配度」双指标为候选人排序，帮助顾问找出最值得优先触达的人。
 
 ---
 
@@ -31,14 +31,14 @@ Reloop/
 │   │   └── sync/              # TTC 客户端 (client.py) + 归一化 (normalizer.py) + 同步编排
 │   ├── schemas/               # Pydantic 请求/响应 schema
 │   └── utils/                 # 工具 (数据隔离断言等)
-├── webapp/                    # 前端 (原生 JS SPA, hash 路由)
-│   ├── index.html             # 入口 HTML (侧边栏 + 主内容)
-│   ├── app.js                 # 路由 + 视图 (Home/Talents/Detail/Positions/Settings)
-│   ├── styles.css             # 全局样式 (深色/浅色主题)
-│   ├── i18n.js                # 国际化 (zh-CN / en-US)
-│   └── data/
-│       ├── provider.js        # API 客户端 (live/mock 切换, 前端缓存)
-│       └── mock.js            # 样本数据 (离线演示)
+├── frontend/                  # React/Vite 源码 (Hash Router)
+├── webapp/                    # 构建产物，由 `npm run build:web` 生成
+│   ├── index.html             # Vite 入口，引用带内容哈希的生产资源
+│   ├── assets/
+│   │   ├── index-<hash>.js    # React SPA 与 API 客户端打包产物
+│   │   └── index-<hash>.css   # 打包后的全局样式
+│   ├── favicon.svg
+│   └── reloop-logo.png
 ├── sql/                       # DDL 脚本
 ├── _migrate_linda.py          # 生产数据归属迁移脚本 (孤儿 open_id -> 飞书身份, 默认 dry-run)
 ├── tests/                     # 测试 (test_pipeline.py: SQLite 覆盖 + LLM 离线)
@@ -53,9 +53,11 @@ Reloop/
 
 ```
 【第一部分 读取数据】TTC 私域人才库 (app.ttcadvisory.com, 需飞书登录)
-    │  服务端全局 Token (BRAINX_TTC_TALENT_AUTH_TOKEN) 认证
+    ├─ 访客共享池: 仅使用服务端 BRAINX_TTC_SHARED_AUTH_TOKEN
+    └─ 登录用户个人库: 使用 users.ttc_auth_token 中 v1: Fernet 加密的每用户凭据
+       (读取时显式传给 owned 同步；缺失、明文旧值或解密失败均要求重新连接，绝不回退共享凭据)
     ▼
-TTCClient.fetch_talents()  ── 分页拉取 (page/page_size=100, 重试+退避)
+TTCClient.fetch_talents(source="shared" | "owned")  ── 分页拉取 (page/page_size=100, 重试+退避)
     │
 【第二部分 提取字段与数据库】
     ▼
@@ -210,7 +212,7 @@ resume_updated_at               简历更新时间 (活跃度核心参考维度)
 
 - Python 3.11+（建议 conda 环境 `reloop`）
 - MySQL 8.0+（生产 RDS；本地测试可用 SQLite）
-- 前端无需构建，直接由后端伺服
+- Node.js 18+（构建 React/Vite 前端时需要）
 
 ### 安装
 
@@ -221,7 +223,15 @@ conda activate reloop
 
 # 或 pip
 pip install -r requirements.txt
+
+# 安装锁定的前端依赖并生成由 FastAPI 伺服的静态资源
+npm ci
+npm run build:web
 ```
+
+`frontend/` 是 React/Vite 的唯一源码；`npm run build:web` 会将可复现的生产资源写入
+`webapp/`。日常前端开发可运行 `npm run dev:web`，发布前应运行
+`npm run check:web`、`npm run test:web` 和 `npm run build:web`。
 
 ### 配置
 
@@ -229,19 +239,55 @@ pip install -r requirements.txt
 cp .env.example .env
 # 编辑 .env:
 #   BRAINX_MYSQL_*    — RDS MySQL 连接（生产 reloop_app 库）
-#   BRAINX_LLM_*      — 大模型 API（OpenAI 兼容，智谱/DeepSeek/阶跃 等）
-#   BRAINX_TTC_*      — TTC 人才库全局 Token + Space ID
+#   BRAINX_LLM_*      — 推荐引擎的 OpenAI 兼容模型与 embedding 配置
+#   BRAINX_DEEPSEEK_* — 仅后端的 JD 结构化解析配置
+#   BRAINX_TTC_SHARED_AUTH_TOKEN — 仅访客共享池使用的可选服务端凭据
+#   BRAINX_TTC_TALENT_*          — TTC 网关/空间等服务配置；不作为个人同步凭据回退
 #   BRAINX_FEISHU_*   — 飞书应用 App ID/Secret（扫码登录）
 ```
+
+飞书和 TTC 回调固定使用 `BRAINX_AUTH_PUBLIC_BASE_URL`：填写已在提供方登记的公网
+HTTPS 工作台根地址，例如 `https://reloop.example.com`。服务端据此生成
+`/auth/feishu/callback` 与 `/auth/ttc/callback`，浏览器不会提交任意 `redirect_uri`。
+用户登录飞书后，可在“设置”中连接个人 TTC 人才库；个人 TTC 登录态由后端加密保存，
+不返回给浏览器，也不会回退到访客共享凭据。示例文件只保留占位符，不能填写或提交真实
+Token、会话密钥或数据库密码。
+
+连接个人 TTC 人才库前必须配置独立的 `BRAINX_AUTH_VAULT_KEY`。该值必须是 Fernet
+密钥，可用 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+生成；缺失或格式无效时，后端会拒绝保存个人登录态并返回 `503`，不会从开发默认字符串
+或其他公开配置派生加密密钥。
+
+### JD 解析与岗位匹配
+
+`POST /positions/parse-jd` 接受非空且不超过 50,000 个字符的 `jd_text`，仅返回可编辑的
+结构化预览，不会创建或更新岗位。确认后再通过 `POST /positions` 原子保存原始 `jd_text`
+和可选 `jd_analysis`；结构化字段包括岗位名称、摘要、职责、必备/加分技能、经验、学历、
+地点、行业关键词、薪资、团队规模、汇报对象和语言要求。带有 `jd_analysis` 的岗位可直接
+进入匹配，未解析岗位会先打开 JD 审阅抽屉。
+
+该能力只读取后端环境变量：
+
+```bash
+BRAINX_DEEPSEEK_API_KEY=
+BRAINX_DEEPSEEK_BASE_URL=https://api.deepseek.com
+BRAINX_DEEPSEEK_MODEL=deepseek-chat
+BRAINX_DEEPSEEK_TIMEOUT_SECONDS=30
+```
+
+DeepSeek 在这里仅用于严格 JSON 的 JD 解析，不提供本项目推荐引擎使用的 embedding
+接口。Embedding 仍由独立的 `BRAINX_LLM_*` 配置提供；DeepSeek 密钥不会写入前端、
+浏览器存储、接口响应或构建产物。
 
 ### 启动（本地）
 
 ```bash
-cd F:\ttc\Reloop
-uvicorn reloop.main:app --reload --port 8000
+uvicorn reloop.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-打开 `http://localhost:8000`，前端由后端自动伺服（`webapp/`），无需单独起前端。
+打开 `http://127.0.0.1:8000`，FastAPI 会同源伺服已构建的 `webapp/`。仅修改前端时，可
+另开终端运行 `npm run dev:web`，再由 Vite 的开发服务器预览；合并部署仍以构建后的
+`webapp/` 为准。
 
 本地开发默认以访客身份（`guest_shared`）访问共享人才池；登录后自动按飞书身份隔离。
 
@@ -256,7 +302,10 @@ curl "http://localhost:8000/sync/ttc/status?sync_id=xxx"
 ### 测试
 
 ```bash
-python tests/test_pipeline.py    # SQLite 覆盖 + LLM 离线，无需任何凭据
+pytest -q
+npm run test:web
+npm run check:web
+npm run build:web
 ```
 
 ### 代码变更流程（遵守 Hayden.md 第六部分）

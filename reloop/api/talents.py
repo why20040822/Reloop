@@ -41,14 +41,15 @@ def list_talents(
     # 访客模式且池为空时，自动触发一次同步（异步，不阻塞返回）
     if settings.auth_allow_guest and owner == settings.guest_owner_id:
         count = q.count()
-        if count == 0:
+        shared_token = settings.ttc_shared_auth_token
+        if count == 0 and shared_token:
             try:
                 from reloop.modules.sync.client import talent_sync_service
-                from reloop.config import settings as _s
                 talent_sync_service.sync_for_user_async(
                     owner,
-                    space_id=_s.ttc_talent_space_id,
-                    auth_token=_s.ttc_talent_auth_token,
+                    space_id=settings.ttc_talent_space_id,
+                    auth_token=shared_token,
+                    source="shared",
                 )
             except Exception:  # noqa: BLE001
                 pass
