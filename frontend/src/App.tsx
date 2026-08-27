@@ -238,7 +238,7 @@ function Dashboard() {
     setDrawerStatus("parsing");
     setDrawerError("");
     try {
-      const result = await api.parseJd(drawerRawJd, drawerImages.map(({ filename, data_url }) => ({ filename, data_url })));
+      const result = await api.parseJd(drawerRawJd, drawerImages.map((image) => image.data_url));
       setDrawerRawJd(result.source_text);
       setDrawerAnalysis(result.analysis);
       setDrawerStatus("review");

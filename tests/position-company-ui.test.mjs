@@ -53,13 +53,13 @@ test("browser-local DeepSeek key is isolated from config and is attached only to
   storage.set("reloop.cfg", JSON.stringify({ mode: "live", deepseekApiKey: "browser-only-secret" }));
   assert.doesNotMatch(JSON.stringify(config.read()), /browser-only-secret|deepseek/i);
 
-  await api.parseJd("原始 JD", [{ data_url: "data:image/png;base64,AA==", filename: "jd.png" }]);
+  await api.parseJd("原始 JD", ["data:image/png;base64,AA=="]);
   await api.listPositions();
   await api.recommend(42, "match");
 
   const parse = calls.find((call) => call.url.includes("parse-jd"));
   assert.equal(parse.init.headers["X-DeepSeek-Api-Key"], "browser-only-secret");
-  assert.deepEqual(JSON.parse(parse.init.body), { jd_text: "原始 JD", images: [{ data_url: "data:image/png;base64,AA==", filename: "jd.png" }] });
+  assert.deepEqual(JSON.parse(parse.init.body), { jd_text: "原始 JD", images: ["data:image/png;base64,AA=="] });
   for (const call of calls.filter((call) => !call.url.includes("parse-jd"))) assert.equal(call.init.headers["X-DeepSeek-Api-Key"], undefined);
   assert.match(calls.find((call) => call.url.includes("recommend/compute")).url, /position_id=42/);
 
@@ -92,11 +92,13 @@ test("React matching uses position IDs, company editing, image controls, and no 
   assert.match(app, /招聘公司/);
   assert.match(app, /if \(!positionHasParsedJd\(nextPosition\)\)/);
   assert.match(app, /setDrawerRawJd\(result\.source_text\)/);
+  assert.match(app, /api\.parseJd\(drawerRawJd, drawerImages\.map\(\(image\) => image\.data_url\)\)/);
   assert.doesNotMatch(app, /使用偏好|保存偏好|locale|语言<select/);
   assert.match(app, /仅保存在此浏览器/);
 
   assert.match(drawer, /onPaste/);
   assert.match(drawer, /accept="image\/jpeg,image\/png,image\/gif,image\/webp"/);
   assert.match(drawer, /aria-label=\{`移除 \$\{image\.filename\}`\}/);
+  assert.match(drawer, /alt=\{image\.filename\}/);
   assert.match(drawer, /招聘公司[\s\S]*岗位名称/);
 });

@@ -30,7 +30,6 @@ export type JDAnalysis = {
   language_requirements: string[];
 };
 export type Position = { id: number; position_name: string; company_name?: string | null; jd_text?: string | null; jd_analysis?: JDAnalysis | null; jd_analysis_version?: string | null; is_active: boolean };
-export type JDParseImage = { data_url: string; filename: string };
 export type JDParseResponse = { analysis: JDAnalysis; source_text: string };
 export type Interaction = { interaction_type: string; summary?: string | null; occurred_at: string };
 export type Recommendation = {
@@ -210,7 +209,7 @@ export const api = {
     return request<{ ok: boolean; followed?: boolean }>(`/talents/${id}/follow`, { method: "POST" });
   },
   async listPositions() { return isMock() ? mockPositions.filter((item) => item.is_active) : request<Position[]>("/positions"); },
-  async parseJd(jdText: string, images: JDParseImage[] = []) {
+  async parseJd(jdText: string, images: string[] = []) {
     if (isMock()) return { analysis: { title: "待确认岗位", summary: jdText.trim() || "已从图片提取职位描述", responsibilities: ["根据 JD 执行岗位职责"], required_skills: ["待确认"], preferred_skills: ["待确认"], experience: "待确认", education: "待确认", location: "待确认", industry_keywords: ["待确认"], salary_range: "待确认", team_size: "待确认", reporting_line: "待确认", language_requirements: ["中文"] }, source_text: jdText.trim() || "已从图片提取职位描述" } satisfies JDParseResponse;
     const requestKey = deepseekApiKey.read();
     return request<JDParseResponse>("/positions/parse-jd", {
