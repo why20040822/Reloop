@@ -5,6 +5,7 @@ import test from "node:test";
 import { applyParsedJdResult, formatPositionLabel } from "../frontend/src/lib/jd.ts";
 import { MAX_JD_IMAGE_BYTES, MAX_JD_IMAGES, canParseJd, mergeJdImages, removeJdImage, validateJdImageFiles } from "../frontend/src/lib/jdImages.ts";
 import { buildManualPositionPayload, buildReviewedPositionPayload, findPositionById, requiresJdParser } from "../frontend/src/lib/positionFlow.ts";
+import * as positionSave from "../frontend/src/lib/positionSave.ts";
 
 function installBrowser() {
   const values = new Map();
@@ -37,9 +38,10 @@ test("position labels identify a company when available and otherwise retain the
   );
 });
 
-test("browser-local DeepSeek key is isolated from config and never crosses origins", async () => {
+test("JD parsing uses only server configuration and clears legacy browser key storage", async () => {
   const storage = installBrowser();
-  const { api, canSendDeepseekApiKey, config, deepseekApiKey } = await import(`../frontend/src/lib/api.ts?key-test=${Date.now()}`);
+  storage.set("reloop.deepseekApiKey", "legacy-browser-secret");
+  const { api, config } = await import(`../frontend/src/lib/api.ts?key-test=${Date.now()}`);
   const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
@@ -49,9 +51,7 @@ test("browser-local DeepSeek key is isolated from config and never crosses origi
     return new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } });
   };
 
-  deepseekApiKey.write("  browser-only-secret  ");
-  assert.equal(deepseekApiKey.read(), "browser-only-secret");
-  storage.set("reloop.cfg", JSON.stringify({ mode: "live", deepseekApiKey: "browser-only-secret" }));
+  storage.set("reloop.cfg", JSON.stringify({ mode: "live", deepseekApiKey: "legacy-browser-secret" }));
   assert.doesNotMatch(JSON.stringify(config.read()), /browser-only-secret|deepseek/i);
 
   await api.parseJd("原始 JD", ["data:image/png;base64,AA=="]);
@@ -59,24 +59,16 @@ test("browser-local DeepSeek key is isolated from config and never crosses origi
   await api.recommend(42, "match");
 
   const parse = calls.find((call) => call.url.includes("parse-jd"));
-  assert.equal(parse.init.headers["X-DeepSeek-Api-Key"], "browser-only-secret");
+  assert.equal(parse.init.headers["X-DeepSeek-Api-Key"], undefined);
   assert.deepEqual(JSON.parse(parse.init.body), { jd_text: "原始 JD", images: ["data:image/png;base64,AA=="] });
   for (const call of calls.filter((call) => !call.url.includes("parse-jd"))) assert.equal(call.init.headers["X-DeepSeek-Api-Key"], undefined);
   assert.match(calls.find((call) => call.url.includes("recommend/compute")).url, /position_id=42/);
 
-  const callsBeforeCrossOrigin = calls.length;
   config.write({ apiBase: "https://other.example" });
-  assert.equal(canSendDeepseekApiKey("https://other.example/positions/parse-jd", location.origin), false);
-  await assert.rejects(api.parseJd("跨域 JD"), /仅能发送到同源工作台服务/);
-  assert.equal(calls.length, callsBeforeCrossOrigin);
-
-  deepseekApiKey.clear();
-  await api.parseJd("无密钥跨域 JD");
-  const noKeyCrossOriginParse = calls.at(-1);
-  assert.match(noKeyCrossOriginParse.url, /^https:\/\/other\.example\/positions\/parse-jd/);
-  assert.equal(noKeyCrossOriginParse.init.headers["X-DeepSeek-Api-Key"], undefined);
-
-  assert.equal(deepseekApiKey.read(), "");
+  await api.parseJd("跨域 JD");
+  const crossOriginParse = calls.at(-1);
+  assert.match(crossOriginParse.url, /^https:\/\/other\.example\/positions\/parse-jd/);
+  assert.equal(crossOriginParse.init.headers["X-DeepSeek-Api-Key"], undefined);
   assert.equal(storage.get("reloop.deepseekApiKey"), undefined);
 });
 
@@ -111,8 +103,29 @@ test("position flow applies parsed source text, mirrors company payloads, and ga
   assert.equal(requiresJdParser(findPositionById(positions, 7)), false);
   assert.equal(requiresJdParser(findPositionById(positions, 8)), true);
   assert.deepEqual(applyParsedJdResult({ analysis, source_text: "图片识别后的 JD" }), { analysis, rawJd: "图片识别后的 JD" });
-  assert.deepEqual(buildReviewedPositionPayload(positions[0], analysis, "图片识别后的 JD"), { position_name: "产品负责人", company_name: "北辰智能", jd_text: "图片识别后的 JD", jd_analysis: { ...analysis, company_name: "北辰智能" } });
+  assert.deepEqual(buildReviewedPositionPayload(positions[0], analysis, "图片识别后的 JD"), { position_name: "产品负责人", company_name: "北辰智能", jd_text: "图片识别后的 JD", jd_analysis: { ...analysis, company_name: "北辰智能" }, replacement_position_id: 7 });
   assert.deepEqual(buildManualPositionPayload("  远景科技 ", "产品负责人", "手动 JD"), { position_name: "产品负责人", company_name: "远景科技", jd_text: "手动 JD" });
+});
+
+test("edited review title is authoritative and refresh fallback removes replaced identities", () => {
+  const analysis = { company_name: "北辰智能", title: "编辑后的岗位", summary: "摘要", responsibilities: ["职责"], required_skills: ["技能"], preferred_skills: ["加分"], experience: "3 年", education: "本科", location: "上海", industry_keywords: ["AI"], salary_range: "面议", team_size: "5 人", reporting_line: "负责人", language_requirements: ["中文"] };
+  const selected = { id: 7, company_name: "北辰智能", position_name: "旧岗位", is_active: true };
+  assert.deepEqual(buildReviewedPositionPayload(selected, analysis, "JD"), {
+    position_name: "编辑后的岗位",
+    company_name: "北辰智能",
+    jd_text: "JD",
+    jd_analysis: analysis,
+    replacement_position_id: 7,
+  });
+
+  assert.equal(typeof positionSave.mergeSavedPositionFallback, "function");
+  const saved = { id: 9, company_name: "北辰智能", position_name: "编辑后的岗位", is_active: true };
+  const other = { id: 8, company_name: "远景科技", position_name: "编辑后的岗位", is_active: true };
+  const duplicate = { id: 10, company_name: " 北辰智能 ", position_name: " 编辑后的岗位 ", is_active: true };
+  assert.deepEqual(
+    positionSave.mergeSavedPositionFallback([selected, other, duplicate], saved, selected.id),
+    [saved, other],
+  );
 });
 
 test("React keeps the tested helpers wired to controls and prevents heading overflow", () => {

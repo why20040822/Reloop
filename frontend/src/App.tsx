@@ -2,17 +2,17 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUpRight, BriefcaseBusiness, ChevronDown, ChevronRight, CircleHelp, Database, Heart, House,
-  Eye, EyeOff, LogIn, Menu, Plus, Search, Settings, UsersRound, X,
+  LogIn, Menu, Plus, Search, Settings, UsersRound, X,
 } from "lucide-react";
 import { DirectGlassSegment } from "./components/DirectGlassSegment";
 import { JDParserDrawer, type JDParserDrawerStatus } from "./components/JDParserDrawer";
-import { api, AUTH_CHANGE_EVENT, config, deepseekApiKey, type CurrentUser, type Interaction, type JDAnalysis, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
+import { api, AUTH_CHANGE_EVENT, config, type CurrentUser, type Interaction, type JDAnalysis, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
 import { applyParsedJdResult, formatPositionLabel } from "./lib/jd";
 import type { JdImage } from "./lib/jdImages";
 import { buildManualPositionPayload, buildReviewedPositionPayload, findPositionById, requiresJdParser } from "./lib/positionFlow";
-import { saveThenRefreshPosition } from "./lib/positionSave";
+import { mergeSavedPositionFallback, saveThenRefreshPosition } from "./lib/positionSave";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./lib/sidebar";
-import { scrubTtcCallbackHash } from "./lib/ttcCallback";
+import { runCallbackOnce, scrubCallbackHash } from "./lib/ttcCallback";
 import { buildActivityRows, buildMatchRows, relativeActivity } from "./lib/dashboard";
 
 const navItems = [
@@ -36,11 +36,21 @@ function AuthCallback() {
   const navigate = useNavigate();
   const [message, setMessage] = useState("正在完成飞书登录…");
   useEffect(() => {
-    const code = new URLSearchParams(location.search).get("code");
-    if (!code) { setMessage("缺少飞书授权码，请返回设置页重新登录。"); return; }
-    void api.feishuLogin(code)
-      .then((auth) => { config.setAuth(auth); navigate("/ttc/connect", { replace: true }); })
-      .catch((error: unknown) => setMessage(errorMessage(error)));
+    const query = new URLSearchParams(location.search);
+    const handle = query.get("handle");
+    history.replaceState(null, "", scrubCallbackHash(window.location.pathname, window.location.hash));
+    if (query.get("status") !== "success" || !handle) {
+      setMessage("飞书登录未完成，请返回设置页重新登录。");
+      return;
+    }
+    let active = true;
+    void runCallbackOnce(`feishu:${handle}`, async () => {
+      const auth = await api.feishuLogin(handle);
+      config.setAuth(auth);
+      return auth;
+    }).then(() => { if (active) navigate("/ttc/connect", { replace: true }); })
+      .catch((error: unknown) => { if (active) setMessage(errorMessage(error)); });
+    return () => { active = false; };
   }, [location.search, navigate]);
   return <CallbackScreen title="飞书登录" message={message} />;
 }
@@ -49,9 +59,13 @@ function TtcConnect() {
   const [message, setMessage] = useState("正在打开 TTC 官方登录页…");
   const navigate = useNavigate();
   useEffect(() => {
-    void api.ttcLoginUrl().then(({ url }) => window.location.assign(url)).catch((error: unknown) => {
-      setMessage(errorMessage(error));
-    });
+    let active = true;
+    void runCallbackOnce("ttc-connect", async () => {
+      const { url } = await api.ttcLoginUrl();
+      window.location.assign(url);
+      return url;
+    }).catch((error: unknown) => { if (active) setMessage(errorMessage(error)); });
+    return () => { active = false; };
   }, []);
   return <CallbackScreen title="连接你的人才库" message={message} action={<button className="secondary-button" onClick={() => navigate("/settings")}>返回设置</button>} />;
 }
@@ -59,35 +73,18 @@ function TtcConnect() {
 function TtcCallback() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [message, setMessage] = useState("正在自动绑定并同步你的人才库…");
+  const [message, setMessage] = useState("正在完成你的人才库连接…");
   useEffect(() => {
-    const token = new URLSearchParams(location.search).get("token");
-    history.replaceState(null, "", scrubTtcCallbackHash(window.location.pathname, window.location.hash));
-    if (!token) { setMessage("未收到 TTC 登录凭证，请重新连接人才库。"); return; }
-    let stopped = false;
-    const bind = async () => {
-      try {
-        const result = await api.bindTtc(token);
-        const poll = async () => {
-          const status = await api.syncStatus(result.sync_id);
-          if (stopped) return;
-          if (status.status === "running") {
-            setMessage(`正在同步人才库：${status.current || status.processed || 0}/${status.total || "…"}`);
-            setTimeout(() => void poll(), 1500);
-            return;
-          }
-          if (status.status === "done") {
-            setMessage(`人才库已自动连接并同步 ${status.synced || status.current || 0} 位人才。`);
-            setTimeout(() => navigate("/settings", { replace: true }), 900);
-            return;
-          }
-          setMessage(status.error || status.message || "同步未完成，请在设置中重试。");
-        };
-        await poll();
-      } catch (error) { if (!stopped) setMessage(errorMessage(error)); }
-    };
-    void bind();
-    return () => { stopped = true; };
+    const query = new URLSearchParams(location.search);
+    const status = query.get("status");
+    history.replaceState(null, "", scrubCallbackHash(window.location.pathname, window.location.hash));
+    if (status !== "success") {
+      setMessage("人才库连接未完成，请在设置中重新连接。");
+      return;
+    }
+    void runCallbackOnce("ttc-callback:success", async () => {
+      navigate("/settings", { replace: true });
+    });
   }, [location.search, navigate]);
   return <CallbackScreen title="正在连接人才库" message={message} />;
 }
@@ -256,7 +253,7 @@ function Dashboard() {
         () => api.setPosition(buildReviewedPositionPayload(selected, analysis, drawerRawJd)),
         () => api.listPositions(),
       );
-      setPositions(result.positions || [result.position, ...positions.filter((position) => position.id !== result.position.id)]);
+      setPositions(result.positions || mergeSavedPositionFallback(positions, result.position, selected?.id));
       setSelectedPositionId(result.position.id);
       setRefreshWarning(result.refreshError ? "岗位已保存，但岗位列表未能刷新。已使用刚保存的岗位继续匹配。" : "");
       setDrawerOpen(false);
@@ -334,8 +331,6 @@ function SettingsPage({ loginError, authRevision, onLogin, onConnect }: { loginE
   const [helpOpen, setHelpOpen] = useState(false);
   const [advancedMessage, setAdvancedMessage] = useState("");
   const [syncError, setSyncError] = useState("");
-  const [storedDeepseekKey, setStoredDeepseekKey] = useState(deepseekApiKey.read());
-  const [showDeepseekKey, setShowDeepseekKey] = useState(false);
   const refreshUser = async () => { if (!config.auth()) { setUser(null); return; } try { setUser(await api.me()); } catch { config.clearAuth(); setUser(null); } };
   useEffect(() => { void refreshUser(); }, [authRevision]);
   const startSync = async () => {
@@ -348,7 +343,6 @@ function SettingsPage({ loginError, authRevision, onLogin, onConnect }: { loginE
   };
   const saveAdvancedSettings = () => {
     setCfg(config.write({ mode: cfg.mode, apiBase: cfg.apiBase }));
-    deepseekApiKey.write(storedDeepseekKey);
     setAdvancedMessage("高级设置已保存。");
   };
   return <div className="settings-page">
@@ -357,9 +351,9 @@ function SettingsPage({ loginError, authRevision, onLogin, onConnect }: { loginE
       description="管理账号与人才库连接。"
       action={<button className="settings-help-button" type="button" aria-label="查看使用帮助" aria-expanded={helpOpen} title="使用帮助" onClick={() => setHelpOpen((open) => !open)}><CircleHelp size={19} /></button>}
     />
-    {helpOpen && <section className="settings-help" aria-label="使用帮助"><strong>使用帮助</strong><p>访客模式读取共享人才库；登录后会自动连接并同步你的私有人才库。</p><p>真实 API、样本数据与后端地址位于高级设置中，普通使用无需调整。</p></section>}
+    {helpOpen && <section className="settings-help" aria-label="使用帮助"><strong>使用帮助</strong><p>登录飞书后，系统会按你的身份连接并同步私有人才库。</p><p>真实 API、样本数据与后端地址位于高级设置中，普通使用无需调整。</p></section>}
     <section className="settings-panel settings-account-panel"><h2>账户与人才库</h2>{loginError && <Notice tone="error">{loginError}</Notice>}{user ? <><p>已登录为 <strong>{user.display_name}</strong> · 人才池 {user.pool_count} 人</p><p>{user.ttc_connected ? `已连接：${user.ttc_bound_name || "你的 TTC 人才库"}` : "尚未连接你的 TTC 人才库"}</p><div className="button-row">{!user.ttc_connected && <button className="secondary-button" type="button" onClick={onConnect}>连接人才库</button>}<button className="primary-button" type="button" onClick={() => void startSync()}>同步人才库</button><button className="text-button" type="button" onClick={() => { config.clearAuth(); setUser(null); }}>退出登录</button></div></> : <><p>登录飞书后，系统会自动连接并同步你的私有人才库。</p><button className="primary-button" type="button" onClick={onLogin}><LogIn size={16} />登录飞书</button></>}{syncError && <Notice tone="error">{syncError}</Notice>}{sync && <Notice tone={sync.status === "failed" ? "error" : "info"}>同步状态：{sync.status}{sync.total ? ` · ${sync.current || sync.processed || 0}/${sync.total}` : ""}{sync.error ? ` · ${sync.error}` : ""}</Notice>}</section>
-    <details className="advanced-settings"><summary><span className="advanced-settings-title"><Database size={18} /><span><strong>高级设置</strong><small>数据来源与后端连接</small></span></span><ChevronRight className="advanced-settings-chevron" size={17} /></summary><div className="advanced-settings-content"><div className="setting-group"><label>数据模式</label><DirectGlassSegment value={cfg.mode} options={[{ value: "live", label: "真实 API" }, { value: "mock", label: "样本数据" }]} onChange={(mode) => { setCfg({ ...cfg, mode: mode as "live" | "mock" }); setAdvancedMessage(""); }} ariaLabel="数据模式" /></div><label>后端地址（可选）<input value={cfg.apiBase} onChange={(event) => { setCfg({ ...cfg, apiBase: event.target.value }); setAdvancedMessage(""); }} placeholder="留空 = 同源后端" /></label><label>DeepSeek API Key <small className="browser-only-note">仅保存在此浏览器</small><span className="secret-key-input"><input type={showDeepseekKey ? "text" : "password"} value={storedDeepseekKey} onChange={(event) => { setStoredDeepseekKey(event.target.value); setAdvancedMessage(""); }} autoComplete="off" /><button className="icon-button" type="button" aria-label={showDeepseekKey ? "隐藏 DeepSeek API Key" : "显示 DeepSeek API Key"} title={showDeepseekKey ? "隐藏" : "显示"} onClick={() => setShowDeepseekKey((show) => !show)}>{showDeepseekKey ? <EyeOff size={16} /> : <Eye size={16} />}</button><button className="icon-button danger" type="button" aria-label="清除 DeepSeek API Key" title="清除" onClick={() => { deepseekApiKey.clear(); setStoredDeepseekKey(""); setShowDeepseekKey(false); setAdvancedMessage(""); }}><X size={16} /></button></span></label><button className="primary-button settings-save-button" type="button" onClick={saveAdvancedSettings}>保存高级设置</button>{advancedMessage && <Notice tone="success">{advancedMessage}</Notice>}</div></details>
+    <details className="advanced-settings"><summary><span className="advanced-settings-title"><Database size={18} /><span><strong>高级设置</strong><small>数据来源与后端连接</small></span></span><ChevronRight className="advanced-settings-chevron" size={17} /></summary><div className="advanced-settings-content"><div className="setting-group"><label>数据模式</label><DirectGlassSegment value={cfg.mode} options={[{ value: "live", label: "真实 API" }, { value: "mock", label: "样本数据" }]} onChange={(mode) => { setCfg({ ...cfg, mode: mode as "live" | "mock" }); setAdvancedMessage(""); }} ariaLabel="数据模式" /></div><label>后端地址（可选）<input value={cfg.apiBase} onChange={(event) => { setCfg({ ...cfg, apiBase: event.target.value }); setAdvancedMessage(""); }} placeholder="留空 = 同源后端" /></label><button className="primary-button settings-save-button" type="button" onClick={saveAdvancedSettings}>保存高级设置</button>{advancedMessage && <Notice tone="success">{advancedMessage}</Notice>}</div></details>
   </div>;
 }
 

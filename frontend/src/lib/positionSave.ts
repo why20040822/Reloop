@@ -14,3 +14,23 @@ export async function saveThenRefreshPosition(save: () => Promise<Position>, ref
     return { position, positions: null, refreshError };
   }
 }
+
+function identity(position: Pick<Position, "position_name" | "company_name">) {
+  return `${position.company_name?.trim() || ""}\u0000${position.position_name.trim()}`;
+}
+
+export function mergeSavedPositionFallback(
+  previous: Position[],
+  saved: Position,
+  replacedPositionId?: number,
+): Position[] {
+  const savedIdentity = identity(saved);
+  return [
+    saved,
+    ...previous.filter((position) => (
+      position.id !== saved.id
+      && position.id !== replacedPositionId
+      && identity(position) !== savedIdentity
+    )),
+  ];
+}

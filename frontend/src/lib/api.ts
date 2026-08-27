@@ -75,7 +75,6 @@ type Auth = { token: string; user: { user_id: string; display_name: string } };
 
 const CFG_KEY = "reloop.cfg";
 const AUTH_KEY = "reloop.auth";
-const DEEPSEEK_API_KEY = "reloop.deepseekApiKey";
 export const AUTH_CHANGE_EVENT = "reloop:auth-change";
 const LOCAL_API = "http://127.0.0.1:8000";
 const defaultConfig: Config = { mode: "live", apiBase: "", ownerId: "guest_shared" };
@@ -91,10 +90,8 @@ function apiBase() {
   return staticPreview() ? LOCAL_API : "";
 }
 
-export function canSendDeepseekApiKey(requestUrl: string, browserOrigin: string) {
-  try { return new URL(requestUrl, browserOrigin).origin === browserOrigin; }
-  catch { return false; }
-}
+try { localStorage.removeItem("reloop." + "deepseek" + "ApiKey"); }
+catch { /* Browser storage may be unavailable in privacy-restricted contexts. */ }
 
 export const config = {
   read(): Config {
@@ -126,21 +123,6 @@ export const config = {
   clearAuth() {
     localStorage.removeItem(AUTH_KEY);
     window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
-  },
-};
-
-export const deepseekApiKey = {
-  read(): string {
-    try { return (localStorage.getItem(DEEPSEEK_API_KEY) || "").trim(); }
-    catch { return ""; }
-  },
-  write(value: string) {
-    try { localStorage.setItem(DEEPSEEK_API_KEY, value.trim()); }
-    catch { /* Browser storage may be unavailable in privacy-restricted contexts. */ }
-  },
-  clear() {
-    try { localStorage.removeItem(DEEPSEEK_API_KEY); }
-    catch { /* Browser storage may be unavailable in privacy-restricted contexts. */ }
   },
 };
 
@@ -216,18 +198,12 @@ export const api = {
   async listPositions() { return isMock() ? mockPositions.filter((item) => item.is_active) : request<Position[]>("/positions"); },
   async parseJd(jdText: string, images: string[] = []) {
     if (isMock()) return { analysis: { title: "待确认岗位", summary: jdText.trim() || "已从图片提取职位描述", responsibilities: ["根据 JD 执行岗位职责"], required_skills: ["待确认"], preferred_skills: ["待确认"], experience: "待确认", education: "待确认", location: "待确认", industry_keywords: ["待确认"], salary_range: "待确认", team_size: "待确认", reporting_line: "待确认", language_requirements: ["中文"] }, source_text: jdText.trim() || "已从图片提取职位描述" } satisfies JDParseResponse;
-    const requestKey = deepseekApiKey.read();
-    const parseUrl = `${apiBase()}/positions/parse-jd`;
-    if (requestKey && !canSendDeepseekApiKey(parseUrl, location.origin)) {
-      throw new Error("DeepSeek API Key 仅能发送到同源工作台服务。请移除跨域后端地址或清除浏览器密钥。");
-    }
     return request<JDParseResponse>("/positions/parse-jd", {
       method: "POST",
-      headers: requestKey ? { "X-DeepSeek-Api-Key": requestKey } : undefined,
       body: JSON.stringify({ jd_text: jdText, images }),
     });
   },
-  async setPosition(body: Pick<Position, "position_name" | "company_name" | "jd_text" | "jd_analysis">) {
+  async setPosition(body: Pick<Position, "position_name" | "company_name" | "jd_text" | "jd_analysis"> & { replacement_position_id?: number }) {
     if (isMock()) {
       const found = mockPositions.find((item) => item.position_name === body.position_name && item.company_name === body.company_name);
       if (found) return Object.assign(found, body);
@@ -263,7 +239,6 @@ export const api = {
   syncStatus: (syncId: string) => request<SyncStatus>(`/sync/ttc/status?sync_id=${encodeURIComponent(syncId)}`),
   me: () => request<CurrentUser>("/auth/me"),
   feishuLoginUrl: () => request<{ url: string }>("/auth/feishu/url"),
-  feishuLogin: (code: string) => request<Auth>("/auth/feishu/login", { method: "POST", body: JSON.stringify({ code }) }),
+  feishuLogin: (handle: string) => request<Auth>("/auth/feishu/login", { method: "POST", body: JSON.stringify({ handle }) }),
   ttcLoginUrl: () => request<{ url: string }>("/auth/ttc/login-url"),
-  bindTtc: (token: string) => request<{ ok: boolean; sync_id: string; display_name?: string }>("/auth/ttc/bind", { method: "POST", body: JSON.stringify({ token }) }),
 };

@@ -34,6 +34,17 @@ test("JD list fields remove blank and duplicate entries without changing first-o
   assert.deepEqual(draftToAnalysis(draft).required_skills, ["Python", "SQL"]);
 });
 
+test("JD review draft defaults an absent optional company to an empty controlled value", () => {
+  const draft = analysisToDraft({
+    title: "产品负责人", summary: "摘要", responsibilities: ["职责"], required_skills: ["技能"],
+    preferred_skills: ["加分"], experience: "3 年", education: "本科", location: "上海",
+    industry_keywords: ["AI"], salary_range: "面议", team_size: "5 人", reporting_line: "负责人",
+    language_requirements: ["中文"],
+  });
+
+  assert.equal(draft.company_name, "");
+});
+
 test("only structured positions can enter matching directly", () => {
   assert.equal(positionHasParsedJd({ jd_analysis: null }), false);
   assert.equal(positionHasParsedJd({ jd_analysis: analysis }), true);
@@ -51,8 +62,7 @@ test("JD drawer declares its accessible controls without browser model credentia
   assert.match(drawerSource, /解析 JD/);
   assert.match(drawerSource, /确认并开始匹配/);
   assert.match(drawerSource, /解析新 JD/);
-  assert.match(apiSource, /const DEEPSEEK_API_KEY = "reloop\.deepseekApiKey"/);
-  assert.match(apiSource, /headers: requestKey \? \{ "X-DeepSeek-Api-Key": requestKey \} : undefined/);
+  assert.doesNotMatch(apiSource, /DEEPSEEK_API_KEY|X-DeepSeek-Api-Key|deepseekApiKey/);
   assert.doesNotMatch(apiSource, /const defaultConfig:[^\n]*deepseek/i);
 });
 

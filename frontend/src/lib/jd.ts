@@ -24,10 +24,12 @@ function draftToList(value: string) {
 }
 
 export function analysisToDraft(analysis: JDAnalysis): JDAnalysisDraft {
-  return Object.fromEntries(Object.entries(analysis).map(([key, value]) => [
+  const draft = Object.fromEntries(Object.entries(analysis).map(([key, value]) => [
     key,
     listFields.has(key as keyof JDAnalysis) ? listToDraft(value as string[]) : value || "",
   ])) as JDAnalysisDraft;
+  draft.company_name = analysis.company_name || "";
+  return draft;
 }
 
 export function draftToAnalysis(draft: JDAnalysisDraft): JDAnalysis {
