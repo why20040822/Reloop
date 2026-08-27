@@ -12,11 +12,14 @@ class TTCAuthError(RuntimeError):
     """TTC official authorization failed or the login token is invalid."""
 
 
-def build_login_url(redirect_uri: str) -> str:
+def build_login_url(redirect_uri: str, state: str | None = None) -> str:
     parsed = urlparse(redirect_uri)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise TTCAuthError("回调地址必须是可访问的 http(s) 工作台地址")
-    return f"{settings.ttc_authorize_url.rstrip('/')}?{urlencode({'callback_url': redirect_uri, 'auto': '1'})}"
+    params = {"callback_url": redirect_uri, "auto": "1"}
+    if state:
+        params["state"] = state
+    return f"{settings.ttc_authorize_url.rstrip('/')}?{urlencode(params)}"
 
 
 def _unwrap(payload: Any) -> dict[str, Any]:

@@ -89,16 +89,22 @@ class TTCClient:
         space_id = space_id or self.default_space_id
         if source == "shared" and not space_id:
             raise TTCFetchError("共享人才库缺少空间 ID")
-        base_path = self.api_path.rstrip("/")
+        api_root = self._api_root()
+        legacy_all_talents_root = api_root.endswith("/all-talents")
+        collection_root = (
+            api_root[: -len("/all-talents")]
+            if legacy_all_talents_root
+            else api_root
+        )
         page, page_size = 1, 100
         all_items: list[dict] = []
         total = None
         try:
             while True:
                 url = (
-                    f"{self.base_url}{base_path}/all-talents/{space_id}/talents"
+                    f"{api_root if legacy_all_talents_root else api_root + '/all-talents'}/{space_id}/talents"
                     if source == "shared"
-                    else f"{self.base_url}{base_path}/talents"
+                    else f"{collection_root}/talents"
                 )
                 resp = self._request_with_retry(
                     url,
@@ -143,6 +149,16 @@ class TTCClient:
         except Exception as e:  # noqa: BLE001
             logger.warning("[ttc] fetch error: %s", e)
             raise TTCFetchError("TTC 人才库网络请求失败") from e
+
+    def _api_root(self) -> str:
+        base = self.base_url.rstrip("/")
+        path = self.api_path.strip("/")
+        if not path:
+            return base
+        suffix = f"/{path}"
+        if base.endswith(suffix) or base.endswith(f"{suffix}/all-talents"):
+            return base
+        return f"{base}{suffix}"
 
     def _request_with_retry(self, url, params=None, headers=None, max_retries=3):
         """带重试和指数退避的 HTTP GET 请求。"""

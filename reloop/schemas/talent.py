@@ -55,8 +55,9 @@ class InteractionCreate(BaseModel):
 class PositionCreate(BaseModel):
     position_name: str = Field(..., max_length=128, description="岗位名, 如: HRBP")
     company_name: Optional[str] = Field(default=None, max_length=128)
-    jd_text: Optional[str] = None
+    jd_text: Optional[str] = Field(default=None, max_length=50_000)
     jd_analysis: Optional[JDAnalysis] = None
+    replacement_position_id: Optional[int] = Field(default=None, gt=0)
 
     @field_validator("position_name", mode="before")
     @classmethod

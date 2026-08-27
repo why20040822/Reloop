@@ -6,9 +6,26 @@ CREATE TABLE IF NOT EXISTS users (
     user_id       VARCHAR(64)  NOT NULL UNIQUE,
     display_name  VARCHAR(128) NULL,
     ttc_space_id  VARCHAR(64)  NULL,
-    ttc_auth_token TEXT        NULL COMMENT '用户绑定的 TTC 网关 Token(~90天)',
+    ttc_auth_token TEXT        NULL COMMENT 'Fernet 加密的用户 TTC 凭据(v1:密文)，不存明文',
     ttc_bound_name VARCHAR(128) NULL COMMENT 'TTC Token 解析出的身份昵称',
     created_at    DATETIME     DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- OAuth state 与 SPA 会话交换句柄: 只保存摘要，短时有效且只能消费一次。
+CREATE TABLE IF NOT EXISTS auth_flow_tokens (
+    id                   BIGINT AUTO_INCREMENT PRIMARY KEY,
+    token_hash           VARCHAR(64) NOT NULL,
+    purpose              VARCHAR(32) NOT NULL,
+    provider             VARCHAR(16) NOT NULL,
+    browser_binding_hash VARCHAR(64) NOT NULL,
+    user_id              VARCHAR(64) NULL,
+    payload              JSON        NULL COMMENT '仅保存安全元数据，不保存 provider code/token',
+    expires_at           DATETIME    NOT NULL,
+    consumed_at          DATETIME    NULL,
+    created_at           DATETIME    DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_auth_flow_token_hash (token_hash),
+    INDEX ix_auth_flow_lookup (provider, purpose, token_hash),
+    INDEX ix_auth_flow_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS talent_profiles (
@@ -45,7 +62,7 @@ CREATE TABLE IF NOT EXISTS positions (
     owner_user_id VARCHAR(64)  NOT NULL,
     position_name VARCHAR(128) NOT NULL COMMENT '当前招聘岗位',
     company_name  VARCHAR(128) NULL COMMENT '招聘公司身份，仅用于岗位区分',
-    jd_text       TEXT         NULL,
+    jd_text       MEDIUMTEXT   NULL,
     jd_analysis   JSON         NULL COMMENT 'DeepSeek 解析后的结构化 JD',
     jd_analysis_version VARCHAR(32) NULL COMMENT '结构化 JD schema/version',
     jd_embedding  JSON         NULL,
@@ -101,7 +118,7 @@ CREATE TABLE IF NOT EXISTS recommend_runs (
     owner_user_id VARCHAR(64)  NOT NULL,
     cache_key     VARCHAR(64)  NOT NULL COMMENT 'sha256(owner|岗位|JD|池版本)',
     position_name VARCHAR(128) NULL,
-    jd_text       TEXT         NULL,
+    jd_text       MEDIUMTEXT   NULL,
     status        VARCHAR(16)  DEFAULT 'running' COMMENT 'running/done/failed',
     pool_version  VARCHAR(128) NULL COMMENT '人才池版本(失效判断留档)',
     result        JSON         NULL COMMENT '最终结果(top3/top10/top_n)',
@@ -115,3 +132,7 @@ CREATE TABLE IF NOT EXISTS recommend_runs (
 -- 已有环境升级: users 表补 TTC 绑定列(幂等, 报错可忽略)
 -- ALTER TABLE users ADD COLUMN ttc_auth_token TEXT NULL,
 --     ADD COLUMN ttc_bound_name VARCHAR(128) NULL;
+
+-- 已有环境升级: 可重复执行，保证 50,000 字符 JD 使用 storage-safe 类型。
+ALTER TABLE positions MODIFY COLUMN jd_text MEDIUMTEXT NULL;
+ALTER TABLE recommend_runs MODIFY COLUMN jd_text MEDIUMTEXT NULL;

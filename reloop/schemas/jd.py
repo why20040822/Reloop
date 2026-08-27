@@ -15,10 +15,11 @@ MAX_JD_IMAGE_BYTES = 8 * 1024 * 1024
 # support standard 4K screenshots while bounding each image decode.
 MAX_JD_IMAGE_SIDE = 8192
 MAX_JD_IMAGE_PIXELS = 40_000_000
+MAX_JD_TOTAL_PIXELS = 40_000_000
 _DATA_IMAGE_URL = re.compile(r"^data:(image/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/]*={0,2})$")
 
 
-def _validate_image_data_url(value: str) -> str:
+def _validate_image_data_url(value: str) -> tuple[str, int]:
     match = _DATA_IMAGE_URL.fullmatch(value)
     if match is None:
         raise ValueError("图片必须是 JPEG/PNG/GIF/WebP data URL")
@@ -57,7 +58,7 @@ def _validate_image_data_url(value: str) -> str:
                 image.load()
     except Exception as exc:  # Pillow exposes format-specific decode exceptions.
         raise ValueError("图片数据不完整或已损坏") from exc
-    return value
+    return value, width * height
 
 
 class JDAnalysis(BaseModel):
@@ -65,7 +66,7 @@ class JDAnalysis(BaseModel):
 
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    title: str = Field(min_length=1)
+    title: str = Field(min_length=1, max_length=128)
     summary: str = Field(min_length=1)
     responsibilities: list[str] = Field(min_length=1)
     required_skills: list[str] = Field(min_length=1)
@@ -146,7 +147,15 @@ class JDParseRequest(BaseModel):
     @field_validator("images")
     @classmethod
     def validate_images(cls, values: list[str]) -> list[str]:
-        return [_validate_image_data_url(value) for value in values]
+        normalized: list[str] = []
+        total_pixels = 0
+        for value in values:
+            checked, pixels = _validate_image_data_url(value)
+            total_pixels += pixels
+            if total_pixels > MAX_JD_TOTAL_PIXELS:
+                raise ValueError("全部图片总像素数不能超过 4000 万")
+            normalized.append(checked)
+        return normalized
 
     @model_validator(mode="after")
     def require_text_or_images(self) -> "JDParseRequest":
@@ -161,7 +170,7 @@ class JDParseResponse(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     analysis: JDAnalysis
-    source_text: str = Field(min_length=1)
+    source_text: str = Field(min_length=1, max_length=50_000)
 
     @field_validator("source_text")
     @classmethod

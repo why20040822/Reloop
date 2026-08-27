@@ -42,10 +42,8 @@ def get_current_user(
 ) -> User:
     """解析当前用户(数据隔离键来源)。
 
-    登录态(X-Auth-Token)优先; 未登录时:
-      - auth_allow_guest=True  -> 返回访客用户(共享池)
-      - auth_require_token=False -> 开发期 fallback: X-Owner-User-Id
-      - 否则 401
+    登录态(X-Auth-Token)优先; 未登录时生产环境直接拒绝。只有显式关闭
+    auth_require_token 的开发环境才允许 owner header 或访客共享池 fallback。
     """
     # 1. 登录态优先
     if x_auth_token:
@@ -59,29 +57,36 @@ def get_current_user(
             detail="登录态无效或已过期, 请重新扫码登录",
         )
 
-    # 2. 无登录态: 先看是否允许访客
+    # 2. 生产环境绝不接受 owner header 或匿名 guest fallback。
+    if settings.auth_require_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="未登录: 请扫码登录后访问(缺少 X-Auth-Token)",
+        )
+
+    # 3. 显式开发 fallback: owner header 优先于可选 guest 共享池。
+    if x_owner_user_id:
+        user = db.query(User).filter(User.user_id == x_owner_user_id).first()
+        if user is None:
+            if not settings.auth_auto_register:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="用户未注册(auth_auto_register=False)",
+                )
+            user = _create_user_or_get_concurrent_winner(db, x_owner_user_id)
+            logger.info("[auth] auto-registered user=%s", x_owner_user_id)
+        return user
+
     if settings.auth_allow_guest:
         user = db.query(User).filter(User.user_id == settings.guest_owner_id).first()
         if user is None:
             user = _create_user_or_get_concurrent_winner(db, settings.guest_owner_id, "访客")
         return user
 
-    # 3. 开发期 fallback: X-Owner-User-Id
-    if not x_owner_user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="未登录: 请扫码登录后访问(缺少 X-Auth-Token)",
-        )
-    user = db.query(User).filter(User.user_id == x_owner_user_id).first()
-    if user is None:
-        if not settings.auth_auto_register:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="用户未注册(auth_auto_register=False)",
-            )
-        user = _create_user_or_get_concurrent_winner(db, x_owner_user_id)
-        logger.info("[auth] auto-registered user=%s", x_owner_user_id)
-    return user
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="未登录: 开发模式需要 X-Owner-User-Id",
+    )
 
 
 def get_optional_user(
@@ -94,7 +99,7 @@ def get_optional_user(
         user_id = verify_session_token(x_auth_token)
         if user_id:
             return db.query(User).filter(User.user_id == user_id).first()
-    if x_owner_user_id:
+    if x_owner_user_id and not settings.auth_require_token:
         return db.query(User).filter(User.user_id == x_owner_user_id).first()
     return None
 
@@ -131,3 +136,23 @@ def require_authenticated_non_guest_user(
             detail="登录态无效或已过期, 请重新扫码登录",
         )
     return user
+
+
+def require_sync_write_user(
+    db: Session = Depends(get_db),
+    x_owner_user_id: Optional[str] = Header(default=None, alias="X-Owner-User-Id"),
+    x_auth_token: Optional[str] = Header(default=None, alias="X-Auth-Token"),
+) -> User:
+    """Require a signed non-guest writer in production, retaining explicit dev mode."""
+    if settings.auth_require_token:
+        return require_authenticated_non_guest_user(db=db, x_auth_token=x_auth_token)
+    if not x_auth_token and not x_owner_user_id:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="开发模式同步写入需要显式 X-Owner-User-Id",
+        )
+    return get_current_user(
+        db=db,
+        x_owner_user_id=x_owner_user_id,
+        x_auth_token=x_auth_token,
+    )

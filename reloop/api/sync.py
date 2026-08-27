@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
-from reloop.api.deps import get_current_user, get_db, owner_user_id
+from reloop.api.deps import get_db, owner_user_id, require_sync_write_user
 from reloop.config import settings
 from reloop.db.models import User
 from reloop.modules.auth.vault import VaultError, unseal_user_token
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/sync", tags=["数据同步"])
 
 
 @router.post("/ttc", summary="从 TTC 人才库接口拉取并同步(访客共享库/登录用户个人库, 异步)")
-def sync_from_ttc(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+def sync_from_ttc(db: Session = Depends(get_db), user: User = Depends(require_sync_write_user)):
     owner = user.user_id
     if owner == settings.guest_owner_id:
         token = settings.ttc_shared_auth_token
@@ -40,6 +40,6 @@ def sync_status(sync_id: str = Query(..., description="同步 ID"), db: Session 
 
 
 @router.post("/ttc/ingest", summary="导入 TTC 页面导出/复制的原始 JSON(异步)")
-def ingest_ttc(body: SyncIngestBody, db: Session = Depends(get_db), owner: str = Depends(owner_user_id)):
-    sync_id = talent_sync_service.sync_for_user_async(owner, raw_payload=body.talents)
+def ingest_ttc(body: SyncIngestBody, user: User = Depends(require_sync_write_user)):
+    sync_id = talent_sync_service.sync_for_user_async(user.user_id, raw_payload=body.talents)
     return {"ok": True, "sync_id": sync_id, "mode": "ingest", "status": "running"}

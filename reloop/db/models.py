@@ -28,6 +28,7 @@ from sqlalchemy import (
     String,
     Text,
 )
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 from sqlalchemy.orm import Mapped, mapped_column
 
 from reloop.db.engine import Base
@@ -40,6 +41,7 @@ def _now() -> dt.datetime:
 
 # 可移植自增主键: MySQL 用 BIGINT, SQLite 用 INTEGER(否则 SQLite 不自增)
 BigIntPK = BigInteger().with_variant(Integer, "sqlite")
+StorageSafeJDText = Text().with_variant(MEDIUMTEXT(), "mysql")
 
 
 # ---------------------------------------------------------------------
@@ -62,6 +64,27 @@ class User(Base):
     last_sync_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)
     last_sync_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
+class AuthFlowToken(Base):
+    """Hashed, short-lived OAuth state or application-session exchange handle."""
+
+    __tablename__ = "auth_flow_tokens"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    token_hash: Mapped[str] = mapped_column(String(64), unique=True, index=True, nullable=False)
+    purpose: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider: Mapped[str] = mapped_column(String(16), nullable=False)
+    browser_binding_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    user_id: Mapped[Optional[str]] = mapped_column(String(64), index=True, nullable=True)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    expires_at: Mapped[dt.datetime] = mapped_column(DateTime, nullable=False)
+    consumed_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+    __table_args__ = (
+        Index("ix_auth_flow_lookup", "provider", "purpose", "token_hash"),
+    )
 
 
 # ---------------------------------------------------------------------
@@ -156,7 +179,7 @@ class Position(Base):
     # 招聘公司仅用于岗位身份和推荐缓存隔离，不参与人才匹配或评分。
     company_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     # JD 文本 (可选; 为空则只用岗位名做匹配)
-    jd_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    jd_text: Mapped[Optional[str]] = mapped_column(StorageSafeJDText, nullable=True)
     # 解析后的结构化 JD；原始 jd_text 仍是推荐缓存和匹配的输入。
     jd_analysis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     jd_analysis_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
@@ -234,7 +257,7 @@ class RecommendRun(Base):
     # 缓存键: sha256(owner | 岗位名 | JD | 池版本), 岗位/JD/数据任一变化即失效
     cache_key: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     position_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
-    jd_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    jd_text: Mapped[Optional[str]] = mapped_column(StorageSafeJDText, nullable=True)
     # running / done / failed
     status: Mapped[str] = mapped_column(String(16), default="running", index=True)
     # 人才池版本(命中判断留档, 便于排查缓存失效原因)

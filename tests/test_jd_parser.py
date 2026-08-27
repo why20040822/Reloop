@@ -23,7 +23,7 @@ from reloop.modules.positions.jd_parser import (
     JDParserUnavailable,
 )
 from reloop.modules.profile.llm import llm_service
-from reloop.schemas.jd import JDAnalysis, JDParseRequest
+from reloop.schemas.jd import JDAnalysis, JDParseRequest, JDParseResponse
 
 
 VALID_ANALYSIS = {
@@ -320,6 +320,20 @@ def test_parse_request_accepts_complete_standard_4k_png():
     assert request.images
 
 
+def test_parse_request_enforces_40_megapixels_across_all_images():
+    image = grayscale_png_data_url(4500, 4500)
+
+    with pytest.raises(ValidationError):
+        JDParseRequest.model_validate({"jd_text": "", "images": [image, image]})
+
+
+def test_parse_response_source_text_uses_same_50000_character_bound():
+    payload = {"analysis": VALID_ANALYSIS, "source_text": "x" * 50_000}
+    assert len(JDParseResponse.model_validate(payload).source_text) == 50_000
+    with pytest.raises(ValidationError):
+        JDParseResponse.model_validate({**payload, "source_text": "x" * 50_001})
+
+
 def test_parse_endpoint_rejects_over_40_megapixel_image_before_parser_or_writes(
     strict_parse_headers, monkeypatch
 ):
@@ -424,10 +438,11 @@ def test_parse_endpoint_does_not_create_position(strict_parse_headers, monkeypat
     assert database_counts() == before
 
 
-def test_parse_endpoint_uses_transient_header_key_without_persisting_it(strict_parse_headers, monkeypatch):
+def test_parse_endpoint_ignores_user_key_header_and_uses_only_server_key(strict_parse_headers, monkeypatch):
     transient_key = "transient-test-key"
+    server_key = "server-configured-key"
     seen_headers = {}
-    monkeypatch.setattr(settings, "deepseek_api_key", "")
+    monkeypatch.setattr(settings, "deepseek_api_key", server_key)
 
     def handle(request: httpx.Request) -> httpx.Response:
         seen_headers["authorization"] = request.headers["Authorization"]
@@ -447,7 +462,7 @@ def test_parse_endpoint_uses_transient_header_key_without_persisting_it(strict_p
         )
 
     assert response.status_code == 200, response.text
-    assert seen_headers["authorization"] == f"Bearer {transient_key}"
+    assert seen_headers["authorization"] == f"Bearer {server_key}"
     assert transient_key not in response.text
     assert database_counts() == before
 
@@ -500,7 +515,7 @@ def test_parse_endpoint_rejects_invalid_or_guest_sessions_without_writes(strict_
 
 def test_parse_endpoint_sanitizes_upstream_failure_without_writes(strict_parse_headers, monkeypatch):
     transient_key = "test-transient-key"
-    monkeypatch.setattr(settings, "deepseek_api_key", "")
+    monkeypatch.setattr(settings, "deepseek_api_key", "server-configured-key")
     install_upstream_transport(
         monkeypatch,
         lambda request: httpx.Response(500, text="provider failure details", request=request),

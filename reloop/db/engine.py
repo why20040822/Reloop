@@ -4,6 +4,7 @@
 测试可用 BRAINX_DATABASE_URL=sqlite:///... 覆盖为本地 SQLite。
 """
 
+import datetime as dt
 from collections.abc import Generator
 
 from sqlalchemy import create_engine
@@ -63,6 +64,16 @@ def init_db() -> None:
         # 表已由其他 worker 建好会抛 1050 —— 忽略, 补列逻辑照常执行。
         logging.getLogger(__name__).warning("[init_db] create_all skipped: %s", e)
     _ensure_columns()
+    _normalize_legacy_positions()
+
+
+def _mysql_mediumtext_alters(column_types: dict[str, dict[str, str]]) -> list[str]:
+    expected = (("positions", "jd_text"), ("recommend_runs", "jd_text"))
+    return [
+        f"ALTER TABLE {table} MODIFY COLUMN {column} MEDIUMTEXT NULL"
+        for table, column in expected
+        if column_types.get(table, {}).get(column, "").upper() != "MEDIUMTEXT"
+    ]
 
 
 def _ensure_columns() -> None:
@@ -131,3 +142,40 @@ def _ensure_columns() -> None:
                     if has:
                         continue
                 conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col_name} {col_ddl}"))
+        if engine.dialect.name == "mysql":
+            column_types = {
+                table: {column["name"]: str(column["type"]) for column in insp.get_columns(table)}
+                for table in ("positions", "recommend_runs")
+                if insp.has_table(table)
+            }
+            for statement in _mysql_mediumtext_alters(column_types):
+                conn.execute(text(statement))
+
+
+def _normalize_legacy_positions() -> None:
+    """Trim legacy identity values and retain only the newest active duplicate."""
+    from reloop.db.models import Position
+
+    with Session(engine) as db:
+        rows = db.query(Position).all()
+        winners: dict[tuple[str, str | None, str], Position] = {}
+        for row in rows:
+            row.position_name = (row.position_name or "").strip()
+            row.company_name = (row.company_name or "").strip() or None
+            if not row.is_active:
+                continue
+            key = (row.owner_user_id, row.company_name, row.position_name)
+            winner = winners.get(key)
+            row_order = (row.created_at or dt.datetime.min, row.id or 0)
+            winner_order = (
+                (winner.created_at or dt.datetime.min, winner.id or 0)
+                if winner is not None
+                else None
+            )
+            if winner is None or row_order > winner_order:
+                if winner is not None:
+                    winner.is_active = 0
+                winners[key] = row
+            else:
+                row.is_active = 0
+        db.commit()

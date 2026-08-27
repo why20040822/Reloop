@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from reloop.api.auth import create_session_token
 from reloop.config import settings
+from reloop.config import Settings
 from reloop.db.engine import SessionLocal, init_db
 from reloop.db.models import User
 from reloop.main import app
@@ -78,6 +79,59 @@ def test_ttc_client_uses_real_gateway_paths():
     assert seen[0][0].endswith("/api/private-talent/v1/all-talents/space-1/talents")
     assert client.fetch_talents(auth_token="token", source="owned") == []
     assert seen[1][0].endswith("/api/private-talent/v1/talents")
+
+
+@pytest.mark.parametrize(
+    ("base_url", "api_path", "source", "expected"),
+    [
+        (
+            "https://gateway.ttcadvisory.com",
+            "/api/private-talent/v1/all-talents",
+            "shared",
+            "https://gateway.ttcadvisory.com/api/private-talent/v1/all-talents/space-1/talents",
+        ),
+        (
+            "https://gateway.ttcadvisory.com/api/private-talent/v1/all-talents",
+            "",
+            "shared",
+            "https://gateway.ttcadvisory.com/api/private-talent/v1/all-talents/space-1/talents",
+        ),
+        (
+            "https://gateway.ttcadvisory.com/api/private-talent/v1/all-talents",
+            "",
+            "owned",
+            "https://gateway.ttcadvisory.com/api/private-talent/v1/talents",
+        ),
+        (
+            "https://gateway.ttcadvisory.com/api/private-talent/v1/all-talents",
+            "/api/private-talent/v1",
+            "shared",
+            "https://gateway.ttcadvisory.com/api/private-talent/v1/all-talents/space-1/talents",
+        ),
+    ],
+)
+def test_ttc_client_normalizes_legacy_all_talents_configuration(
+    base_url, api_path, source, expected
+):
+    client = TTCClient()
+    client.base_url = base_url
+    client.api_path = api_path
+    seen = []
+    client._request_with_retry = lambda url, **kwargs: (
+        seen.append(url)
+        or SimpleNamespace(status_code=200, json=lambda: {"data": {"list": []}})
+    )  # type: ignore[method-assign]
+
+    assert client.fetch_talents("space-1", "owned-token", source=source) == []
+    assert seen == [expected]
+    assert "/all-talents/all-talents/" not in seen[0]
+
+
+def test_ttc_authorize_default_uses_app_host_and_keeps_gateway_api_host():
+    configured = Settings(_env_file=None)
+
+    assert configured.ttc_authorize_url == "https://app.ttcadvisory.com/auth/authorize"
+    assert configured.ttc_talent_api_base_url == "https://gateway.ttcadvisory.com"
 
 
 @pytest.mark.parametrize(

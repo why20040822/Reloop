@@ -2,11 +2,14 @@
 
 import copy
 import json
+from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.dialects import mysql
+from sqlalchemy.dialects.mysql import MEDIUMTEXT
 
 from reloop.config import settings
 from reloop.db.engine import SessionLocal, init_db
@@ -141,6 +144,71 @@ def test_position_title_whitespace_replaces_same_company_position(owner):
         db.close()
 
 
+def test_directly_seeded_legacy_whitespace_position_is_replaced_by_canonical_request(owner):
+    db = SessionLocal()
+    try:
+        legacy = Position(
+            owner_user_id="company-owner",
+            position_name="  产品负责人  ",
+            company_name=" 远景科技 ",
+            jd_text="legacy",
+            is_active=1,
+        )
+        db.add(legacy)
+        db.commit()
+        legacy_id = legacy.id
+    finally:
+        db.close()
+
+    with TestClient(app) as client:
+        replacement = _create_position(
+            client,
+            owner,
+            position_name="产品负责人",
+            company_name="远景科技",
+            jd_text="canonical",
+        )
+
+    db = SessionLocal()
+    try:
+        assert db.get(Position, legacy_id).is_active == 0
+        assert db.get(Position, replacement["id"]).is_active == 1
+    finally:
+        db.close()
+
+
+def test_startup_migration_normalizes_positions_and_keeps_newest_active_duplicate(
+    tmp_path, monkeypatch
+):
+    import reloop.db.engine as engine_module
+    from reloop.db.engine import Base
+
+    legacy_engine = create_engine(f"sqlite:///{tmp_path / 'legacy-position-identity.db'}")
+    Base.metadata.create_all(legacy_engine)
+    with legacy_engine.begin() as connection:
+        connection.execute(text(
+            "INSERT INTO positions "
+            "(id, owner_user_id, position_name, company_name, is_active, created_at) VALUES "
+            "(101, 'owner', ' 产品负责人 ', ' 远景科技 ', 1, '2026-01-01 00:00:00'), "
+            "(102, 'owner', '产品负责人', '远景科技', 1, '2026-02-01 00:00:00'), "
+            "(103, 'owner', ' 数据分析师 ', '   ', 1, '2026-03-01 00:00:00')"
+        ))
+
+    monkeypatch.setattr(engine_module, "engine", legacy_engine)
+    engine_module.init_db()
+    engine_module.init_db()
+
+    with legacy_engine.connect() as connection:
+        rows = connection.execute(text(
+            "SELECT id, position_name, company_name, is_active FROM positions ORDER BY id"
+        )).mappings().all()
+    assert rows == [
+        {"id": 101, "position_name": "产品负责人", "company_name": "远景科技", "is_active": 0},
+        {"id": 102, "position_name": "产品负责人", "company_name": "远景科技", "is_active": 1},
+        {"id": 103, "position_name": "数据分析师", "company_name": None, "is_active": 1},
+    ]
+
+
 def test_position_rejects_blank_title(owner):
     with TestClient(app) as client:
         response = client.post(
@@ -233,6 +301,147 @@ def test_init_db_adds_company_column_idempotently(tmp_path, monkeypatch):
 
     columns = [column["name"] for column in inspect(legacy_engine).get_columns("positions")]
     assert columns.count("company_name") == 1
+
+
+def test_position_and_recommend_run_jd_use_mysql_mediumtext_with_sqlite_compatibility():
+    position_type = Position.__table__.c.jd_text.type
+    run_type = RecommendRun.__table__.c.jd_text.type
+
+    assert isinstance(position_type.dialect_impl(mysql.dialect()), MEDIUMTEXT)
+    assert isinstance(run_type.dialect_impl(mysql.dialect()), MEDIUMTEXT)
+    assert position_type.compile(dialect=create_engine("sqlite://").dialect) == "TEXT"
+    assert run_type.compile(dialect=create_engine("sqlite://").dialect) == "TEXT"
+
+
+def test_production_mysql_schema_tracks_auth_flows_and_storage_safe_jd_columns():
+    schema = (Path(__file__).parents[1] / "sql" / "schema.sql").read_text(encoding="utf-8")
+
+    assert "CREATE TABLE IF NOT EXISTS auth_flow_tokens" in schema
+    assert schema.count("jd_text       MEDIUMTEXT") == 2
+    assert "ALTER TABLE positions MODIFY COLUMN jd_text MEDIUMTEXT NULL;" in schema
+    assert "ALTER TABLE recommend_runs MODIFY COLUMN jd_text MEDIUMTEXT NULL;" in schema
+    assert "Fernet" in schema
+    assert "不存明文" in schema
+
+
+def test_mysql_mediumtext_migration_is_idempotent():
+    import reloop.db.engine as engine_module
+
+    assert hasattr(engine_module, "_mysql_mediumtext_alters")
+    legacy = {
+        "positions": {"jd_text": "TEXT"},
+        "recommend_runs": {"jd_text": "LONGTEXT"},
+    }
+    current = {
+        "positions": {"jd_text": "MEDIUMTEXT"},
+        "recommend_runs": {"jd_text": "mediumtext"},
+    }
+
+    assert engine_module._mysql_mediumtext_alters(legacy) == [
+        "ALTER TABLE positions MODIFY COLUMN jd_text MEDIUMTEXT NULL",
+        "ALTER TABLE recommend_runs MODIFY COLUMN jd_text MEDIUMTEXT NULL",
+    ]
+    assert engine_module._mysql_mediumtext_alters(current) == []
+
+
+def test_position_jd_text_is_bounded_to_storage_contract():
+    assert len(PositionCreate.model_validate({"position_name": "岗位", "jd_text": "x" * 50_000}).jd_text) == 50_000
+    with pytest.raises(ValueError):
+        PositionCreate.model_validate({"position_name": "岗位", "jd_text": "x" * 50_001})
+
+
+def test_reviewed_title_is_authoritative_and_explicit_replacement_deactivates_owned_row(owner):
+    with TestClient(app) as client:
+        original = _create_position(
+            client, owner, position_name="旧岗位", company_name="远景科技", jd_text="old"
+        )
+        analysis = copy.deepcopy(VALID_ANALYSIS)
+        analysis["title"] = "编辑后的岗位"
+        renamed = _create_position(
+            client,
+            owner,
+            position_name="旧岗位",
+            company_name="远景科技",
+            jd_text="new",
+            jd_analysis=analysis,
+            replacement_position_id=original["id"],
+        )
+
+    assert renamed["position_name"] == "编辑后的岗位"
+    assert renamed["id"] != original["id"]
+    db = SessionLocal()
+    try:
+        assert db.get(Position, original["id"]).is_active == 0
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("foreign,inactive", [(True, False), (False, True)])
+def test_explicit_replacement_rejects_foreign_or_inactive_position(owner, foreign, inactive):
+    db = SessionLocal()
+    try:
+        row = Position(
+            owner_user_id="other-owner" if foreign else "company-owner",
+            position_name="旧岗位",
+            company_name="远景科技",
+            is_active=0 if inactive else 1,
+        )
+        db.add(row)
+        db.commit()
+        row_id = row.id
+    finally:
+        db.close()
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/positions",
+            headers=owner,
+            json={
+                "position_name": "新岗位",
+                "company_name": "远景科技",
+                "replacement_position_id": row_id,
+            },
+        )
+
+    assert response.status_code == 404
+    db = SessionLocal()
+    try:
+        assert db.query(Position).filter(Position.owner_user_id == "company-owner", Position.position_name == "新岗位").count() == 0
+    finally:
+        db.close()
+
+
+def test_real_cached_engine_resolution_prefers_id_over_conflicting_name(owner):
+    db = SessionLocal()
+    try:
+        first = Position(owner_user_id="company-owner", position_name="标题 A", is_active=1)
+        target = Position(owner_user_id="company-owner", position_name="标题 B", is_active=1)
+        db.add_all([first, target])
+        db.commit()
+        engine = RecommendEngine()
+        pool_version = engine._pool_version(db, "company-owner")
+        cache_key = engine._cache_key("company-owner", target, pool_version)
+        db.add(RecommendRun(
+            owner_user_id="company-owner",
+            cache_key=cache_key,
+            position_name=target.position_name,
+            status="done",
+            pool_version=pool_version,
+            result={"position": "标题 B", "top_n": []},
+        ))
+        db.commit()
+
+        result = engine.result_of(
+            db,
+            "company-owner",
+            position_name="标题 A",
+            position_id=target.id,
+        )
+    finally:
+        db.close()
+
+    assert result["status"] == "done"
+    assert result["position"] == "标题 B"
 
 
 def test_recommend_position_id_wins_over_title_for_compute_and_result(owner, monkeypatch):

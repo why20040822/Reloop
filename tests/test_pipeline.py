@@ -11,23 +11,6 @@ LLM/TTC 未配 Key 时自动走离线降级(哈希向量/规则抽取), 因此�
 也可用 pytest 运行: pytest tests/test_pipeline.py -v
 """
 
-import os
-import sys
-
-# 必须在导入 reloop 之前设置: 覆盖为本地 SQLite, 不连 RDS
-# 文件名带 PID: 避免旧 schema 残留文件(或并行运行)互相污染
-_TEST_DIR = os.path.dirname(__file__)
-_TEST_DB = os.path.join(_TEST_DIR, f"test_reloop_{os.getpid()}.db")
-for _stale in [f for f in os.listdir(_TEST_DIR) if f.startswith("test_reloop") and f.endswith(".db")]:
-    try:
-        os.remove(os.path.join(_TEST_DIR, _stale))
-    except OSError:
-        pass
-os.environ["BRAINX_DATABASE_URL"] = f"sqlite:///{_TEST_DB.replace(os.sep, '/')}"
-os.environ["BRAINX_LLM_API_KEY"] = ""  # 强制离线模式
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 import datetime as dt  # noqa: E402
 
 from reloop.db.engine import SessionLocal, init_db  # noqa: E402
@@ -114,7 +97,6 @@ def test_normalize_batch():
     assert t1["last_active_at"] is not None
     t3 = talents[2]
     assert t3["work_years"] == round(11 / 12, 2) and t3["base_location"] == "北京"
-    return talents
 
 
 def run_pipeline():
@@ -123,7 +105,7 @@ def run_pipeline():
     db = SessionLocal()
     try:
         # ---- 1. TTC 原始数据 -> 标准结构化格式 ----
-        talents = test_normalize_batch()
+        talents = normalize_batch(TTC_RAW)
         test_parse_work_years()
         print("[1] normalize OK: 4 条原始记录 -> 标准格式, keys =", list(STANDARD_KEYS)[:5], "...")
 
@@ -261,12 +243,3 @@ def run_pipeline():
         return 0
     finally:
         db.close()
-        try:
-            if os.path.exists(_TEST_DB):
-                os.remove(_TEST_DB)
-        except OSError:
-            pass  # 清理失败不影响测试结论
-
-
-if __name__ == "__main__":
-    sys.exit(run_pipeline())

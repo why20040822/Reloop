@@ -3,13 +3,12 @@
 流程:
   1. 前端展示登录二维码(内容 = 飞书授权页 URL, /auth/feishu/qrcode 生成 SVG)
   2. 用户飞书扫码确认 -> 飞书重定向回 redirect_uri 并携带 ?code=...
-  3. 前端拿 code 调 POST /auth/feishu/login:
-     后端 app_access_token -> (code 换) user_access_token -> user_info
-  4. 以飞书 open_id 作为 Reloop 用户标识, 签发 HMAC 会话 token(X-Auth-Token)
+  3. 后端 callback 校验一次性 state，并用 code 换 user_access_token -> user_info
+  4. 浏览器仅用一次性 opaque handle 换取 Reloop HMAC 会话 token(X-Auth-Token)
 
 说明: Reloop 自己的飞书应用拿到的 open_id 与 TTC 平台(TTC 的飞书应用)
-视角的 open_id 不同; TTC 数据 Token 统一由服务端 .env 的
-BRAINX_TTC_TALENT_AUTH_TOKEN 提供, 不再由用户粘贴绑定。
+视角的 open_id 不同；个人 TTC 凭据由 TTC callback 在后端校验并按用户加密保存，
+不会传入 SPA 或回退到共享池服务凭据。
 
 依赖: 无 SDK, httpx 直连开放接口; 未配置 App ID/Secret 时相关接口返回未启用。
 """

@@ -84,6 +84,9 @@ class Settings(BaseSettings):
     auth_session_secret: str = ""
     # 登录态有效期(小时), 默认 7 天
     auth_session_ttl_hours: int = 168
+    # OAuth state and SPA session-handle lifetimes. Both are server-side and one-use.
+    auth_flow_ttl_seconds: int = 600
+    auth_handle_ttl_seconds: int = 120
     # OAuth/TTC 登录回跳域名。后端在其下生成固定 provider callback 地址。
     auth_public_base_url: str = ""
     # 加密存储和用户级 TTC token 必须使用独立 Fernet 密钥，禁止从公开默认值派生。
@@ -93,9 +96,9 @@ class Settings(BaseSettings):
     # ---------- TTC 私域人才库 (数据源) ----------
     ttc_talent_base_url: str = "https://app.ttcadvisory.com"
     ttc_talent_api_base_url: str = "https://gateway.ttcadvisory.com"
-    ttc_authorize_url: str = "https://gateway.ttcadvisory.com/auth/authorize"
+    ttc_authorize_url: str = "https://app.ttcadvisory.com/auth/authorize"
     ttc_talent_space_id: str = "U2034543869059211264"
-    # 站点需飞书登录, 抓取接口需带登录态; 填写后 client 才会真正拉取
+    # DEPRECATED: 仅保留旧环境解析兼容；个人同步与共享池均不会回退使用此值。
     ttc_talent_auth_token: str = ""
     # Service-owned token for the guest shared pool. Personal users never fall back to it.
     ttc_shared_auth_token: str = ""

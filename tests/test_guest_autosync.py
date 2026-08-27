@@ -25,6 +25,7 @@ def _empty_guest_pool():
 
 def test_concurrent_guest_creation_recovers_the_user_created_by_another_request(monkeypatch):
     monkeypatch.setattr(settings, "auth_allow_guest", True)
+    monkeypatch.setattr(settings, "auth_require_token", False)
     _empty_guest_pool()
     db = SessionLocal()
     original_commit = db.commit
@@ -56,13 +57,16 @@ def test_concurrent_guest_creation_recovers_the_user_created_by_another_request(
 
 def test_manual_guest_sync_rejects_legacy_token_only_configuration(monkeypatch):
     monkeypatch.setattr(settings, "auth_allow_guest", True)
+    monkeypatch.setattr(settings, "auth_require_token", False)
     monkeypatch.setattr(settings, "ttc_shared_auth_token", "")
     monkeypatch.setattr(settings, "ttc_talent_auth_token", "legacy-token-that-must-not-be-used")
 
     with TestClient(app) as client, patch(
         "reloop.api.sync.talent_sync_service.sync_for_user_async",
     ) as sync:
-        response = client.post("/sync/ttc")
+        response = client.post(
+            "/sync/ttc", headers={"X-Owner-User-Id": settings.guest_owner_id}
+        )
 
     assert response.status_code == 409, response.text
     assert "BRAINX_TTC_SHARED_AUTH_TOKEN" in response.json()["detail"]
@@ -71,6 +75,7 @@ def test_manual_guest_sync_rejects_legacy_token_only_configuration(monkeypatch):
 
 def test_empty_guest_pool_autosync_rejects_legacy_token_only_configuration(monkeypatch):
     monkeypatch.setattr(settings, "auth_allow_guest", True)
+    monkeypatch.setattr(settings, "auth_require_token", False)
     monkeypatch.setattr(settings, "ttc_shared_auth_token", "")
     monkeypatch.setattr(settings, "ttc_talent_auth_token", "legacy-token-that-must-not-be-used")
     monkeypatch.setattr(settings, "ttc_talent_space_id", "U-shared")
@@ -87,6 +92,7 @@ def test_empty_guest_pool_autosync_rejects_legacy_token_only_configuration(monke
 
 def test_empty_guest_pool_autosync_uses_shared_token_and_source(monkeypatch):
     monkeypatch.setattr(settings, "auth_allow_guest", True)
+    monkeypatch.setattr(settings, "auth_require_token", False)
     monkeypatch.setattr(settings, "ttc_shared_auth_token", "shared-service-token")
     monkeypatch.setattr(settings, "ttc_talent_auth_token", "legacy-token-that-must-not-be-used")
     monkeypatch.setattr(settings, "ttc_talent_space_id", "U-shared")

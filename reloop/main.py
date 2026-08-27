@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from reloop.api import auth, positions, recommend, sync, talents
 from reloop.config import settings
 from reloop.db.engine import init_db
+from reloop.modules.auth.redaction import RedactAuthCallbackMiddleware
 
 logging.basicConfig(level=settings.app_log_level.upper())
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.add_middleware(RedactAuthCallbackMiddleware)
 
 
 @app.get("/health", tags=["系统"])
