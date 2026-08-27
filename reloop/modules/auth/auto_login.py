@@ -111,26 +111,52 @@ def _apply_stealth(page) -> None:
         logger.warning("[autologin] stealth 未生效: %s", e)
 
 
+def _looks_like_jwt(s: str) -> bool:
+    """TTC Bearer 为自签 HS256 JWT(三段 base64url, ~850 字符)。"""
+    s = s.strip()
+    if len(s) < 60 or s.count(".") < 2:
+        return False
+    return all(part and all(c.isalnum() or c in "-_=" for c in part) for part in s.split("."))
+
+
 def _extract_token_from_ls(page) -> str:
-    """从 localStorage 常见键里找 Bearer Token(兜底)。"""
+    """扫描 localStorage 全部键值, 找 JWT 形态的值(不限键名)。"""
     try:
-        ls = page.evaluate(
-            """(ks) => {
-                const out = {};
-                for (const k of ks) { const v = localStorage.getItem(k); if (v) out[k] = v; }
+        entries = page.evaluate(
+            """() => {
+                const out = [];
+                for (let i = 0; i < localStorage.length; i++) {
+                    const k = localStorage.key(i);
+                    out.push([k, localStorage.getItem(k)]);
+                }
                 return out;
-            }""",
-            list(_TOKEN_LS_KEYS),
+            }"""
         )
     except Exception:  # noqa: BLE001
         return ""
-    for v in (ls or {}).values():
-        s = str(v).strip()
+    for _k, v in (entries or []):
+        s = str(v or "").strip()
         if s.lower().startswith("bearer "):
             s = s[7:].strip()
-        # TTC JWT 一般 3 段且较长
-        if len(s) > 60 and s.count(".") >= 2:
+        if _looks_like_jwt(s):
             return s
+    return ""
+
+
+def _extract_token_from_json(payload) -> str:
+    """递归扫描 JSON(登录/换 token 接口的响应), 找 JWT 形态的值。"""
+    if isinstance(payload, dict):
+        for v in payload.values():
+            t = _extract_token_from_json(v)
+            if t:
+                return t
+    elif isinstance(payload, list):
+        for v in payload:
+            t = _extract_token_from_json(v)
+            if t:
+                return t
+    elif isinstance(payload, str) and _looks_like_jwt(payload):
+        return payload
     return ""
 
 
@@ -168,10 +194,27 @@ def _run_login_thread(sid: str) -> None:
                 auth = req.headers.get("authorization", "")
                 if auth.lower().startswith("bearer "):
                     tok = auth[7:].strip()
-                    if len(tok) > 60 and tok.count(".") >= 2:
+                    if _looks_like_jwt(tok):
                         found["token"] = tok
 
+            def on_response(resp):
+                # 登录/换 token 接口的响应体里也含 JWT(第三通道)
+                if found.get("token"):
+                    return
+                try:
+                    ctype = resp.headers.get("content-type", "")
+                    if "json" not in ctype:
+                        return
+                    tok = _extract_token_from_json(resp.json())
+                    if tok:
+                        found["token"] = tok
+                        logger.info("[autologin] sid=%s token from response %s",
+                                    sid, resp.url[:100])
+                except Exception:  # noqa: BLE001
+                    pass
+
             page.on("request", on_request)
+            page.on("response", on_response)
             page.goto(login_url, wait_until="domcontentloaded", timeout=60000)
             try:
                 page.wait_for_load_state("load", timeout=8000)
@@ -213,6 +256,7 @@ def _run_login_thread(sid: str) -> None:
                 logger.info("[autologin] 未跳到 open.feishu.cn, 当前 url=%s", page.url[:120])
 
             deadline = time.time() + _PENDING_TIMEOUT
+            _dbg_last = {"url": "", "keys": ""}
             while time.time() < deadline:
                 # 1) 网络头
                 if not found.get("token"):
@@ -225,10 +269,23 @@ def _run_login_thread(sid: str) -> None:
                     t = _extract_token_from_ls(page)
                     if t:
                         found["token"] = t
-                # 3) 页面已离开飞书扫码页(用户已扫码确认, 正在回跳) -> 过程提示
+                # 3) 诊断: 页面 url/title/LS 键变化时打日志(排查抓取失败)
+                try:
+                    cur_url = page.url
+                    if cur_url != _dbg_last["url"]:
+                        _dbg_last["url"] = cur_url
+                        logger.info("[autologin] sid=%s page -> %s | title=%s",
+                                    sid, cur_url[:150], (page.title() or "")[:40])
+                    ls_keys = page.evaluate("() => Object.keys(localStorage).join(',')")
+                    if ls_keys != _dbg_last["keys"]:
+                        _dbg_last["keys"] = ls_keys
+                        logger.info("[autologin] sid=%s localStorage keys: %s", sid, (ls_keys or "(empty)")[:200])
+                except Exception:  # noqa: BLE001
+                    pass
+                # 4) 页面已离开飞书扫码页(用户已扫码确认, 正在回跳) -> 过程提示
                 if not found.get("token") and "ttcadvisory.com" in page.url:
                     sess.hint = "已扫码, 正在抓取登录态…"
-                # 4) 刷新截图(二维码/进度)
+                # 5) 刷新截图(二维码/进度)
                 try:
                     sess.qr_png = page.screenshot(type="png")
                     sess.touch()
