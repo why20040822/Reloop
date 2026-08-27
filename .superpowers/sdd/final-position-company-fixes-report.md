@@ -120,12 +120,16 @@ Implementation:
   rejects foreign/inactive IDs, and deactivates the replacement transactionally.
 - Frontend sends the selected position ID, selects the returned row ID, and removes
   replaced or duplicate fallback rows when list refresh fails.
+- The mock API adapter now removes a distinct `replacement_position_id` row before
+  returning or inserting the replacement, keeps same-identity updates in place, and
+  strips the transport-only ID from mock `Position` objects. Live request serialization
+  is unchanged.
 - Same-title/company identity semantics and ID-over-name recommendation selection remain
   intact.
 
 Primary files: `reloop/api/positions.py`, `reloop/schemas/talent.py`,
 `frontend/src/lib/positionFlow.ts`, `frontend/src/lib/positionSave.ts`,
-`frontend/src/App.tsx`, `tests/test_position_company.py`,
+`frontend/src/App.tsx`, `frontend/src/lib/api.ts`, `tests/test_position_company.py`,
 `tests/position-company-ui.test.mjs`.
 
 ### 7. Approved browser-local DeepSeek override
@@ -198,6 +202,10 @@ Additional RED/GREEN evidence from the final continuation:
   `pytest -q tests/test_jd_parser.py -k 'parse_endpoint_uses_transient_header_key_without_persisting_it or parse_endpoint_falls_back_to_server_key_without_transient_header'`
   produced `1 failed, 1 passed` because the server key incorrectly won. The expanded
   endpoint rerun after restoration produced `4 passed, 27 deselected`.
+- Mock replacement parity:
+  `node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/position-company-ui.test.mjs`
+  produced `6 passed, 1 failed` because the referenced old mock ID remained selectable;
+  after the mock-only adapter change, the same command produced `7 passed`.
 
 ## Final verification
 
@@ -206,10 +214,10 @@ Fresh verification after all implementation and self-review fixes:
 - `pytest -q`: `104 passed`, exit 0. Six warnings remain from third-party/deprecated
   interfaces: Starlette TestClient/httpx, two Pydantic v2 class Config warnings, and
   SQLite's deprecated default datetime adapter in three expiry tests.
-- `npm run test:web`: `38 passed`, `0 failed`, exit 0.
+- `npm run test:web`: `39 passed`, `0 failed`, exit 0.
 - `npm run check:web`: exit 0.
 - `npm run build:web`: exit 0; Vite transformed 1,595 modules and generated
-  `webapp/assets/index-DIFwGD8O.js` (209.35 kB, 68.31 kB gzip).
+  `webapp/assets/index-D1McKnNE.js` (209.45 kB, 68.34 kB gzip).
 - `git diff --check`: exit 0.
 
 ## Commits
@@ -217,6 +225,7 @@ Fresh verification after all implementation and self-review fixes:
 - `d3e9e37` - `fix: harden auth and position contracts`
 - `8f51510` - `fix(web): align secure callbacks and position saves`
 - `0f297e1` - `fix: restore browser-local DeepSeek key`
+- `2220cc4` - `fix(web): replace mock positions by id`
 
 The documentation and this report are committed separately after these implementation
 commits so the report can contain stable implementation hashes.
@@ -231,6 +240,8 @@ commits so the report can contain stable implementation hashes.
 - Confirmed provider TTC tokens and Feishu codes are absent from SPA callback handling,
   redirect bodies/locations, flow payloads, and redacted downstream query strings.
 - Confirmed production schema, ORM types, startup migration, and examples agree.
+- Confirmed renamed mock replacements remove the referenced old row, retain only the
+  returned selectable ID, and do not persist `replacement_position_id`.
 - Confirmed generated `webapp/index.html` references the new tracked hash and the old
   asset is removed; the bundle contains both the key boundary and opaque callback flow.
 - Confirmed no `test_reloop*.db` file remains in this worktree.
