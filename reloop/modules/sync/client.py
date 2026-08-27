@@ -200,6 +200,15 @@ class TalentSyncService:
                 space_id, auth_token=auth_token, source=source,
                 progress_callback=lambda t, c: progress_callback and progress_callback(c, t)
             )
+            # 私有池为空 -> 回退拉公司共享池(默认 space)。团队成员的自有 token
+            # 对共享池有读取权限(2026-08-27 实测), 避免新用户绑定后同步到 0 人。
+            if not talents and source == "owned" and self.client.default_space_id:
+                logger.info("[sync] owner=%s 私有池为空, 回退拉共享池 %s",
+                            owner_user_id, self.client.default_space_id)
+                talents = self.client.fetch_talents(
+                    self.client.default_space_id, auth_token=auth_token, source="shared",
+                    progress_callback=lambda t, c: progress_callback and progress_callback(c, t)
+                )
         if not talents:
             logger.info("[sync] no talents for owner=%s", owner_user_id)
             return 0
