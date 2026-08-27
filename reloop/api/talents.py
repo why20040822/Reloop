@@ -13,12 +13,17 @@ from reloop.utils.isolation import assert_owner
 
 router = APIRouter(prefix="/talents", tags=["人才库"])
 
+# slim 列表模式下置空的重量级字段(详情页 /talents/{id} 不受影响)
+_SLIM_HEAVY_FIELDS = ("work_history", "projects", "delivery_records",
+                      "education_history", "notes", "stability", "resume_text_preview")
+
 
 @router.get("", response_model=list[TalentOut], summary="列出我的人才库")
 def list_talents(
     keyword: str | None = None,
     limit: int | None = None,
     offset: int = 0,
+    slim: bool = False,
     db: Session = Depends(get_db),
     owner: str = Depends(owner_user_id),
 ):
@@ -27,6 +32,8 @@ def list_talents(
     分页(向后兼容): 不传 limit -> 返回全部(旧行为, 前端/测试按数组消费);
     传 limit -> 返回 [offset, offset+limit) 切片, 避免大库全量返回超重响应。
     limit 上限 500, 防止一次拉过多。
+    slim=true: 列表视图瘦身模式——重量级 JSON 字段(工作经历/项目/教育明细/备注等)
+    置空返回, 全量 383 人载荷从 ~3MB 降到 ~300KB(gzip 后更小), 详情仍走 /talents/{id}。
     """
     q = db.query(TalentProfile).filter(TalentProfile.owner_user_id == owner)
     if keyword:
@@ -57,21 +64,31 @@ def list_talents(
     if limit is not None:
         limit = max(1, min(int(limit), 500))
         q = q.offset(max(0, int(offset))).limit(limit)
-    return q.all()
+    rows = q.all()
+    if slim:
+        for r in rows:
+            for f in _SLIM_HEAVY_FIELDS:
+                setattr(r, f, None)
+    return rows
 
 
 @router.get("/followed/list", summary="获取已关注人才列表")
 def list_followed(
+    slim: bool = False,
     db: Session = Depends(get_db),
     owner: str = Depends(owner_user_id),
 ):
-    """返回 tags 含 '已关注' 的人才列表。"""
+    """返回 tags 含 '已关注' 的人才列表。slim=true 同 /talents 瘦身模式。"""
     q = (
         db.query(TalentProfile)
         .filter(TalentProfile.owner_user_id == owner)
         .all()
     )
     followed = [t for t in q if t.tags and "已关注" in t.tags]
+    if slim:
+        for t in followed:
+            for f in _SLIM_HEAVY_FIELDS:
+                setattr(t, f, None)
     return followed
 
 

@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from reloop.api import auth, positions, recommend, sync, talents
@@ -51,6 +52,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# JSON 响应压缩: /talents 全量 ~3MB 的载荷在弱网/代理链路下会拖爆前端 15s 超时,
+# gzip 后约 1/10; 对 API 与静态托管同时生效。
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 
 @app.get("/health", tags=["系统"])

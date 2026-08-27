@@ -156,11 +156,14 @@ export const api = {
   health: () => request<{ status: string }>("/health"),
   async listTalents(keyword = "") {
     if (isMock()) return mockTalents.filter((talent) => JSON.stringify(talent).includes(keyword));
-    return request<Talent[]>(`/talents${keyword ? `?keyword=${encodeURIComponent(keyword)}` : ""}`);
+    // slim=1 瘦身模式: 列表视图不拉重量级 JSON 字段(详情页单独拉全量)
+    const params = new URLSearchParams({ slim: "1" });
+    if (keyword) params.set("keyword", keyword);
+    return request<Talent[]>(`/talents?${params}`);
   },
   async listFollowed() {
     if (isMock()) return mockTalents.filter((talent) => talent.tags?.includes("已关注"));
-    return request<Talent[]>("/talents/followed/list");
+    return request<Talent[]>("/talents/followed/list?slim=1");
   },
   async getTalent(id: number) {
     if (isMock()) return mockTalents.find((talent) => talent.id === id) || null;
