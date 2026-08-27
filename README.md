@@ -94,8 +94,8 @@ RDS MySQL (reloop_app.talent_profiles)  ── 按 owner_user_id 隔离
 
 ### 数据隔离
 
-- 所有业务表带 `owner_user_id` 隔离键；生产强制飞书登录态 `X-Auth-Token`（`auth_require_token=True`），`X-Owner-User-Id` 仅开发期 fallback。
-- 未登录访客走 `guest_shared` 共享池。
+- 所有业务表带 `owner_user_id` 隔离键；生产强制飞书登录态 `X-Auth-Token`（`auth_require_token=True`），拒绝 `X-Owner-User-Id` 与匿名 guest fallback。
+- `guest_shared` 与 `X-Owner-User-Id` 只在显式关闭 token enforcement 的开发模式可用；同步/导入写入还必须提供明确的开发 owner header。
 
 ### 数据库表
 
@@ -244,6 +244,7 @@ cp .env.example .env
 #   BRAINX_TTC_SHARED_AUTH_TOKEN — 仅访客共享池使用的可选服务端凭据
 #   BRAINX_TTC_TALENT_*          — TTC 网关/空间等服务配置；不作为个人同步凭据回退
 #   BRAINX_FEISHU_*   — 飞书应用 App ID/Secret（扫码登录）
+#   BRAINX_AUTH_*     — 登录签名、回调公开域名、短时 state/handle TTL 与 TTC 凭据加密
 ```
 
 飞书和 TTC 回调固定使用 `BRAINX_AUTH_PUBLIC_BASE_URL`：填写已在提供方登记的公网
@@ -252,6 +253,11 @@ HTTPS 工作台根地址，例如 `https://reloop.example.com`。服务端据此
 用户登录飞书后，可在“设置”中连接个人 TTC 人才库；个人 TTC 登录态由后端加密保存，
 不返回给浏览器，也不会回退到访客共享凭据。示例文件只保留占位符，不能填写或提交真实
 Token、会话密钥或数据库密码。
+
+OAuth state 与飞书登录句柄只以摘要形式存入 `auth_flow_tokens`，绑定发起浏览器、到期失效且
+只能消费一次；TTL 分别由 `BRAINX_AUTH_FLOW_TTL_SECONDS`（默认 600 秒）和
+`BRAINX_AUTH_HANDLE_TTL_SECONDS`（默认 120 秒）配置。飞书 provider code 由后端兑换，TTC
+provider token 由后端校验并加密绑定，二者都不会进入 SPA 存储或回跳 URL。
 
 连接个人 TTC 人才库前必须配置独立的 `BRAINX_AUTH_VAULT_KEY`。该值必须是 Fernet
 密钥，可用 `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
@@ -279,8 +285,8 @@ BRAINX_DEEPSEEK_TIMEOUT_SECONDS=30
 ```
 
 DeepSeek 在这里仅用于严格 JSON 的 JD 解析，不提供本项目推荐引擎使用的 embedding
-接口。Embedding 仍由独立的 `BRAINX_LLM_*` 配置提供；部署可配置服务端密钥，也可在单次
-解析请求中通过 `X-DeepSeek-Api-Key` 提供临时密钥。该临时值不会持久化、记录或写入接口响应。
+接口。Embedding 仍由独立的 `BRAINX_LLM_*` 配置提供。JD 解析只使用服务端
+`BRAINX_DEEPSEEK_API_KEY`；浏览器请求头、localStorage 与前端设置均不能提供或覆盖该密钥。
 
 ### 启动（本地）
 
@@ -292,14 +298,23 @@ uvicorn reloop.main:app --reload --host 127.0.0.1 --port 8000
 另开终端运行 `npm run dev:web`，再由 Vite 的开发服务器预览；合并部署仍以构建后的
 `webapp/` 为准。
 
-本地开发默认以访客身份（`guest_shared`）访问共享人才池；登录后自动按飞书身份隔离。
+默认配置与生产一致，缺少签名登录态时拒绝访问。需要 owner-header 联调时，必须显式设置
+`BRAINX_AUTH_REQUIRE_TOKEN=false`；此时 `X-Owner-User-Id` 可指定开发隔离键，而
+`BRAINX_AUTH_ALLOW_GUEST=true` 仅允许无 header 的 `guest_shared` 读取。开发同步/导入写入
+不接受隐式 guest，仍要求明确的 `X-Owner-User-Id`。
 
 ### 同步人才库
 
 ```bash
-# 前端「设置 → 同步 TTC」按钮，或直接调接口
-curl -X POST http://localhost:8000/sync/ttc
-curl "http://localhost:8000/sync/ttc/status?sync_id=xxx"
+# 生产：使用飞书登录后签发的应用 session token
+curl -X POST http://localhost:8000/sync/ttc \
+  -H 'X-Auth-Token: <signed-session-token>'
+curl 'http://localhost:8000/sync/ttc/status?sync_id=xxx' \
+  -H 'X-Auth-Token: <signed-session-token>'
+
+# 仅开发（BRAINX_AUTH_REQUIRE_TOKEN=false）：写入必须显式指定 owner
+curl -X POST http://localhost:8000/sync/ttc \
+  -H 'X-Owner-User-Id: dev-user'
 ```
 
 ### 测试
