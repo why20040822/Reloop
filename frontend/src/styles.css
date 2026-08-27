@@ -239,3 +239,14 @@ textarea { min-height: 110px; padding: 10px; resize: vertical; }
 }
 
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; } }
+
+/* TTC 扫码绑定二维码 */
+.ttc-qr {
+  display: block;
+  width: min(320px, 78vw);
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  margin: 12px auto;
+  background: #fff;
+}

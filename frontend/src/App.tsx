@@ -45,13 +45,67 @@ function AuthCallback() {
 
 function TtcConnect() {
   const [message, setMessage] = useState("正在打开 TTC 官方登录页…");
+  const [fallback, setFallback] = useState(false);
   const navigate = useNavigate();
   useEffect(() => {
     void api.ttcLoginUrl().then(({ url }) => window.location.assign(url)).catch((error: unknown) => {
-      setMessage(errorMessage(error));
+      setMessage(`官方授权页不可用：${errorMessage(error)}`);
+      setFallback(true);
     });
   }, []);
-  return <CallbackScreen title="连接你的人才库" message={message} action={<button className="secondary-button" onClick={() => navigate("/settings")}>返回设置</button>} />;
+  if (fallback) return <TtcAutoConnect />;
+  return <CallbackScreen title="连接你的人才库" message={message} action={<div className="button-row"><button className="secondary-button" onClick={() => setFallback(true)}>授权页打不开？用扫码绑定</button><button className="secondary-button" onClick={() => navigate("/settings")}>返回设置</button></div>} />;
+}
+
+// 备用通道: 一键扫码绑定(零复制粘贴)——服务器无头浏览器打开 TTC 登录页,
+// 这里轮询展示二维码截图; 用户手机飞书扫码后自动抓 Token/绑定/同步。
+function TtcAutoConnect() {
+  const navigate = useNavigate();
+  const [qr, setQr] = useState("");
+  const [status, setStatus] = useState("starting");
+  const [message, setMessage] = useState("正在启动扫码绑定…");
+  useEffect(() => {
+    let stopped = false;
+    let timer = 0;
+    const run = async () => {
+      try {
+        const { sid } = await api.ttcAutoLogin();
+        const poll = async () => {
+          if (stopped) return;
+          try {
+            const s = await api.ttcAutoLoginStatus(sid);
+            if (stopped) return;
+            setStatus(s.status);
+            if (s.qr_png_b64) setQr(s.qr_png_b64);
+            if (s.status === "success") {
+              setMessage(`已连接${s.bound_name ? `：${s.bound_name}` : ""}，正在后台同步你的人才库。`);
+              setTimeout(() => navigate("/settings", { replace: true }), 1400);
+              return;
+            }
+            if (s.status === "pending") {
+              setMessage("请用飞书扫描下方二维码完成授权");
+              timer = window.setTimeout(() => void poll(), 1500);
+              return;
+            }
+            setMessage(s.error || "绑定未完成，请重试。");
+          } catch (error) { if (!stopped) { setStatus("failed"); setMessage(errorMessage(error)); } }
+        };
+        await poll();
+      } catch (error) { setStatus("failed"); setMessage(errorMessage(error)); }
+    };
+    void run();
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [navigate]);
+  return <main className="callback-screen"><div>
+    <span className="brand-mark"><img className="brand-logo" src="/reloop-logo.png" alt="" /></span>
+    <h1>扫码绑定人才库</h1>
+    <p>{message}</p>
+    {status === "pending" && qr ? <img className="ttc-qr" src={`data:image/png;base64,${qr}`} alt="TTC 登录二维码" /> : null}
+    <div className="button-row">
+      {(status === "failed" || status === "timeout" || status === "expired") && <button className="primary-button" onClick={() => window.location.reload()}>重新发起</button>}
+      <button className="secondary-button" onClick={() => navigate("/settings")}>返回设置</button>
+    </div>
+  </div></main>;
 }
 
 function TtcCallback() {

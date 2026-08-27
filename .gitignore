@@ -46,3 +46,5 @@ extract_docx.py
 
 # 团队私密文档(含凭据, 禁止入库)
 hanyu接下来的文档/
+
+node_modules/

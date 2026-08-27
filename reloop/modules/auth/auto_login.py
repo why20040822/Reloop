@@ -37,7 +37,8 @@ logger = logging.getLogger(__name__)
 _SESSION_TTL = 360          # 登录会话最长存活(秒): pending 超时 + success 结果保留
 _PENDING_TIMEOUT = 240      # 单个 pending 会话等待扫码的最长时间(秒)
 _QR_REFRESH_INTERVAL = 1.0  # 二维码截图刷新间隔(秒)
-_TOKEN_LS_KEYS = ("access_token", "token", "Authorization",
+_TOKEN_LS_KEYS = ("ottin-jwt-token-v2",   # TTC 真实键(2026-08-27 从其授权页 chunk 确认)
+                  "access_token", "token", "Authorization",
                   "authorization", "accessToken", "auth_token")
 
 _session_lock = threading.Lock()
@@ -262,7 +263,15 @@ def _run_login_thread(sid: str) -> None:
             sess.status = "failed"
             sess.error = "Reloop 用户不存在, 请先登录"
         else:
-            user.ttc_auth_token = token
+            # Token 加密落库(Fernet vault, 与 /auth/ttc/bind 同一标准); 未配 vault key 拒绝明文
+            from reloop.modules.auth.vault import VaultError, seal_user_token
+            try:
+                user.ttc_auth_token = seal_user_token(token)
+            except VaultError as e:
+                sess.status = "failed"
+                sess.error = str(e)
+                sess.touch()
+                return
             if sess.bound_name:
                 user.ttc_bound_name = sess.bound_name
             if sess.space_id:
@@ -271,11 +280,13 @@ def _run_login_thread(sid: str) -> None:
             sess.status = "success"
             logger.info("[autologin] sid=%s user=%s bound=%s space=%s",
                         sid, sess.user_id, sess.bound_name, sess.space_id)
-            # 自动触发同步(后台 sync_jobs)
+            # 自动触发同步(异步后台, 与 bind 接口同一入口)
             from reloop.modules.sync.client import talent_sync_service
-            talent_sync_service.start_sync(
-                db, sess.user_id, space_id=sess.space_id or None,
+            talent_sync_service.sync_for_user_async(
+                sess.user_id,
+                space_id=sess.space_id or None,
                 auth_token=token or None,
+                source="owned",
             )
     except Exception as e:  # noqa: BLE001
         logger.exception("[autologin] bind failed sid=%s", sid)
