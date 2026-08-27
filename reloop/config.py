@@ -93,7 +93,9 @@ class Settings(BaseSettings):
     # ---------- TTC 私域人才库 (数据源) ----------
     ttc_talent_base_url: str = "https://app.ttcadvisory.com"
     ttc_talent_api_base_url: str = "https://gateway.ttcadvisory.com"
-    ttc_authorize_url: str = "https://gateway.ttcadvisory.com/auth/authorize"
+    # TTC 官方登录授权页(前端 SPA 路由, 客户端完成授权后回跳 callback_url)。
+    # 2026-08-27 实测: gateway 子域 /auth/authorize 503(ALB 后端宕), app 子域同路径 200 可用。
+    ttc_authorize_url: str = "https://app.ttcadvisory.com/auth/authorize"
     ttc_talent_space_id: str = "U2034543869059211264"
     # 站点需飞书登录, 抓取接口需带登录态; 填写后 client 才会真正拉取
     ttc_talent_auth_token: str = ""
