@@ -58,19 +58,23 @@ class PositionCreate(BaseModel):
     jd_text: Optional[str] = None
     jd_analysis: Optional[JDAnalysis] = None
 
-    @field_validator("position_name")
+    @field_validator("position_name", mode="before")
     @classmethod
     def normalize_position_name(cls, value: str) -> str:
+        if not isinstance(value, str):
+            return value
         cleaned = value.strip()
         if not cleaned:
             raise ValueError("岗位名不能为空")
         return cleaned
 
-    @field_validator("company_name")
+    @field_validator("company_name", mode="before")
     @classmethod
     def normalize_company_name(cls, value: Optional[str]) -> Optional[str]:
         if value is None:
             return None
+        if not isinstance(value, str):
+            return value
         return value.strip() or None
 
     @model_validator(mode="after")

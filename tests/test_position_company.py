@@ -167,6 +167,21 @@ def test_parsed_and_submitted_company_names_reject_values_over_128_characters():
         PositionCreate.model_validate({"position_name": "产品负责人", "company_name": "x" * 129})
 
 
+def test_title_and_company_length_bounds_apply_after_whitespace_normalization():
+    canonical = "x" * 128
+    analysis = copy.deepcopy(VALID_ANALYSIS)
+    analysis["company_name"] = f"  {canonical}  "
+
+    parsed = JDAnalysis.model_validate(analysis)
+    submitted = PositionCreate.model_validate(
+        {"position_name": f"  {canonical}  ", "company_name": f"  {canonical}  "}
+    )
+
+    assert parsed.company_name == canonical
+    assert submitted.position_name == canonical
+    assert submitted.company_name == canonical
+
+
 def test_same_company_replaces_only_that_company_position(owner):
     with TestClient(app) as client:
         original = _create_position(

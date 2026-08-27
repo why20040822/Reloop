@@ -3,13 +3,18 @@
 import base64
 from io import BytesIO
 import re
+import warnings
 
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 MAX_JD_IMAGES = 4
 MAX_JD_IMAGE_BYTES = 8 * 1024 * 1024
+# DeepSeek accepts image sides up to 8192. Cap decoded pixels at 8 MP so one
+# image stays within a modest decode allocation even when four are submitted.
+MAX_JD_IMAGE_SIDE = 8192
+MAX_JD_IMAGE_PIXELS = 8_000_000
 _DATA_IMAGE_URL = re.compile(r"^data:(image/(?:jpeg|png|gif|webp));base64,([A-Za-z0-9+/]*={0,2})$")
 
 
@@ -37,11 +42,20 @@ def _validate_image_data_url(value: str) -> str:
     if not valid_signatures[media_type]:
         raise ValueError("图片内容与 data URL 类型不匹配")
     try:
-        with Image.open(BytesIO(decoded)) as image:
-            image.verify()
-        with Image.open(BytesIO(decoded)) as image:
-            image.load()
-    except (OSError, SyntaxError, UnidentifiedImageError, ValueError) as exc:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(BytesIO(decoded)) as image:
+                width, height = image.size
+                if (
+                    width > MAX_JD_IMAGE_SIDE
+                    or height > MAX_JD_IMAGE_SIDE
+                    or width * height > MAX_JD_IMAGE_PIXELS
+                ):
+                    raise ValueError("图片尺寸或像素数超出限制")
+                image.verify()
+            with Image.open(BytesIO(decoded)) as image:
+                image.load()
+    except Exception as exc:  # Pillow exposes format-specific decode exceptions.
         raise ValueError("图片数据不完整或已损坏") from exc
     return value
 
@@ -83,7 +97,7 @@ class JDAnalysis(BaseModel):
             raise ValueError("字段不能为空")
         return cleaned
 
-    @field_validator("company_name")
+    @field_validator("company_name", mode="before")
     @classmethod
     def normalize_company_name(cls, value: str | None) -> str | None:
         if value is None:

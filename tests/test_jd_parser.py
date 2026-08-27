@@ -3,6 +3,8 @@
 import copy
 import base64
 import json
+import struct
+import zlib
 
 import httpx
 import pytest
@@ -45,6 +47,24 @@ VALID_PARSE_RESPONSE = {
     "source_text": "从图片转写出的职位描述",
 }
 IMAGE_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg=="
+
+
+def oversized_dimension_png_data_url() -> str:
+    width, height = 8193, 1
+
+    def chunk(kind: bytes, content: bytes) -> bytes:
+        body = kind + content
+        return struct.pack(">I", len(content)) + body + struct.pack(">I", zlib.crc32(body) & 0xFFFFFFFF)
+
+    image = b"".join(
+        [
+            b"\x89PNG\r\n\x1a\n",
+            chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)),
+            chunk(b"IDAT", zlib.compress(b"\x00" + (b"\x00" * width))),
+            chunk(b"IEND", b""),
+        ]
+    )
+    return "data:image/png;base64," + base64.b64encode(image).decode()
 
 
 @pytest.fixture
@@ -218,6 +238,25 @@ def test_parse_request_rejects_invalid_image_data_without_writes(strict_parse_he
     assert malformed.status_code == 422
     assert unsupported.status_code == 422
     assert too_large.status_code == 422
+    assert database_counts() == before
+
+
+def test_parse_endpoint_rejects_excessive_image_dimensions_before_parser_or_writes(
+    strict_parse_headers, monkeypatch
+):
+    def fail_if_parser_called(*args, **kwargs):
+        raise AssertionError("image validation must reject before parser invocation")
+
+    monkeypatch.setattr(DeepSeekJDParser, "parse", fail_if_parser_called)
+    before = database_counts()
+    with TestClient(app) as client:
+        response = client.post(
+            "/positions/parse-jd",
+            headers=strict_parse_headers,
+            json={"jd_text": "", "images": [oversized_dimension_png_data_url()]},
+        )
+
+    assert response.status_code == 422
     assert database_counts() == before
 
 
