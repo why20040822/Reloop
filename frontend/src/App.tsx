@@ -44,17 +44,16 @@ function AuthCallback() {
 }
 
 function TtcConnect() {
-  const [message, setMessage] = useState("正在打开 TTC 官方登录页…");
-  const [fallback, setFallback] = useState(false);
+  // 官方授权页对回调域名有白名单(TTC 前端硬编码), 未收录域名会在其页面报「授权失败」。
+  // 因此不自动跳转: 默认主推零复制粘贴的扫码绑定; 官方页作为已收录域名的备选。
+  const [mode, setMode] = useState<"choose" | "auto">("choose");
   const navigate = useNavigate();
-  useEffect(() => {
-    void api.ttcLoginUrl().then(({ url }) => window.location.assign(url)).catch((error: unknown) => {
-      setMessage(`官方授权页不可用：${errorMessage(error)}`);
-      setFallback(true);
-    });
-  }, []);
-  if (fallback) return <TtcAutoConnect />;
-  return <CallbackScreen title="连接你的人才库" message={message} action={<div className="button-row"><button className="secondary-button" onClick={() => setFallback(true)}>授权页打不开？用扫码绑定</button><button className="secondary-button" onClick={() => navigate("/settings")}>返回设置</button></div>} />;
+  if (mode === "auto") return <TtcAutoConnect />;
+  return <CallbackScreen title="连接你的人才库" message={"飞书扫码即可自动完成绑定与同步，无需复制粘贴。"} action={<div className="button-row">
+    <button className="primary-button" onClick={() => setMode("auto")}>扫码绑定（推荐）</button>
+    <button className="secondary-button" onClick={() => { void api.ttcLoginUrl().then(({ url }) => window.location.assign(url)).catch(() => setMode("auto")); }}>使用官方授权页</button>
+    <button className="secondary-button" onClick={() => navigate("/settings")}>返回设置</button>
+  </div>} />;
 }
 
 // 备用通道: 一键扫码绑定(零复制粘贴)——服务器无头浏览器打开 TTC 登录页,
