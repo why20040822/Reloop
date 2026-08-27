@@ -128,7 +128,31 @@ Primary files: `reloop/api/positions.py`, `reloop/schemas/talent.py`,
 `frontend/src/App.tsx`, `tests/test_position_company.py`,
 `tests/position-company-ui.test.mjs`.
 
-### 7. Test and repository hygiene
+### 7. Approved browser-local DeepSeek override
+
+Finding: the continuation incorrectly treated the approved browser-local DeepSeek key
+as deprecated credential exposure and removed its UI, storage, request header, and
+backend request override.
+
+Implementation:
+
+- Restored the masked Advanced Settings input, show/hide and clear icon buttons, and
+  exact `仅保存在此浏览器` label.
+- The value is trimmed into the dedicated `reloop.deepseekApiKey` localStorage item and
+  never enters `reloop.cfg`.
+- Only same-origin `/positions/parse-jd` requests can receive
+  `X-DeepSeek-Api-Key`; a stored key with a cross-origin backend fails before `fetch`,
+  and every other API call omits the header.
+- The backend uses the header only for that parser instance and falls back to
+  `BRAINX_DEEPSEEK_API_KEY` when the request header is blank or absent.
+- Added a regression requiring this behavior to coexist with opaque callback handles,
+  callback redaction, and StrictMode in-flight deduplication.
+
+Primary files: `frontend/src/lib/api.ts`, `frontend/src/App.tsx`,
+`reloop/api/positions.py`, `tests/position-company-ui.test.mjs`,
+`tests/jd-ui.test.mjs`, `tests/ttc-callback.test.mjs`, `tests/test_jd_parser.py`.
+
+### 8. Test and repository hygiene
 
 Finding: the sync pipeline was an uncollected script, pipeline collection mutated DB
 environment/files, and a generated SQLite DB was tracked.
@@ -166,24 +190,33 @@ Additional RED/GREEN evidence from the final continuation:
 - Settled callback retry failed `1 != 2` with `3 passed, 1 failed`; after making the
   registry in-flight-only it produced `4 passed`.
 - Changed Python surface produced `103 passed` before the repository-wide rerun.
+- Restored browser-key frontend contracts:
+  `node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test tests/position-company-ui.test.mjs tests/jd-ui.test.mjs tests/ttc-callback.test.mjs`
+  produced `15 passed, 4 failed` while the storage helper, header, and Settings controls
+  were absent; after restoration the same command produced `19 passed`.
+- Transient-header precedence:
+  `pytest -q tests/test_jd_parser.py -k 'parse_endpoint_uses_transient_header_key_without_persisting_it or parse_endpoint_falls_back_to_server_key_without_transient_header'`
+  produced `1 failed, 1 passed` because the server key incorrectly won. The expanded
+  endpoint rerun after restoration produced `4 passed, 27 deselected`.
 
 ## Final verification
 
 Fresh verification after all implementation and self-review fixes:
 
-- `pytest -q`: `103 passed`, exit 0. Six warnings remain from third-party/deprecated
+- `pytest -q`: `104 passed`, exit 0. Six warnings remain from third-party/deprecated
   interfaces: Starlette TestClient/httpx, two Pydantic v2 class Config warnings, and
   SQLite's deprecated default datetime adapter in three expiry tests.
 - `npm run test:web`: `38 passed`, `0 failed`, exit 0.
 - `npm run check:web`: exit 0.
 - `npm run build:web`: exit 0; Vite transformed 1,595 modules and generated
-  `webapp/assets/index-CW258Dk5.js` (207.29 kB, 67.69 kB gzip).
+  `webapp/assets/index-DIFwGD8O.js` (209.35 kB, 68.31 kB gzip).
 - `git diff --check`: exit 0.
 
 ## Commits
 
 - `d3e9e37` - `fix: harden auth and position contracts`
 - `8f51510` - `fix(web): align secure callbacks and position saves`
+- `0f297e1` - `fix: restore browser-local DeepSeek key`
 
 The documentation and this report are committed separately after these implementation
 commits so the report can contain stable implementation hashes.
@@ -192,13 +225,14 @@ commits so the report can contain stable implementation hashes.
 
 - Confirmed no files under `reloop/modules/scoring` changed and no scoring weights were
   modified.
-- Confirmed browser DeepSeek key UI/storage/header behavior is absent; a one-time module
-  cleanup removes the legacy browser storage key.
+- Confirmed browser DeepSeek key UI/storage/header behavior is present, uses only the
+  dedicated storage item, fails closed across origins, and leaves all non-parse requests
+  header-free.
 - Confirmed provider TTC tokens and Feishu codes are absent from SPA callback handling,
   redirect bodies/locations, flow payloads, and redacted downstream query strings.
 - Confirmed production schema, ORM types, startup migration, and examples agree.
 - Confirmed generated `webapp/index.html` references the new tracked hash and the old
-  asset is removed.
+  asset is removed; the bundle contains both the key boundary and opaque callback flow.
 - Confirmed no `test_reloop*.db` file remains in this worktree.
 - Secret-pattern scan found no credential-like additions; examples and tests contain
   placeholders/fake values only.

@@ -274,7 +274,7 @@ data URL 图片（每张解码后至多 8 MiB）；两者至少提供一项。�
 薪资、团队规模、汇报对象和语言要求。带有 `jd_analysis` 的岗位可直接进入匹配，未解析岗位会先
 打开 JD 审阅抽屉。
 
-该能力只读取后端环境变量：
+后端可读取以下环境变量作为默认配置：
 
 ```bash
 BRAINX_DEEPSEEK_API_KEY=
@@ -285,8 +285,15 @@ BRAINX_DEEPSEEK_TIMEOUT_SECONDS=30
 ```
 
 DeepSeek 在这里仅用于严格 JSON 的 JD 解析，不提供本项目推荐引擎使用的 embedding
-接口。Embedding 仍由独立的 `BRAINX_LLM_*` 配置提供。JD 解析只使用服务端
-`BRAINX_DEEPSEEK_API_KEY`；浏览器请求头、localStorage 与前端设置均不能提供或覆盖该密钥。
+接口。Embedding 仍由独立的 `BRAINX_LLM_*` 配置提供。用户也可在“设置 → 高级设置”的
+`DeepSeek API Key` 掩码输入框中填写密钥；输入框带显示/隐藏与清除按钮，并标注
+“仅保存在此浏览器”。该值只写入独立的 `reloop.deepseekApiKey` localStorage 项，不进入
+`reloop.cfg`。
+
+浏览器密钥只会通过 `X-DeepSeek-Api-Key` 发送到同源的 `/positions/parse-jd` 请求；配置跨域
+后端时，只要浏览器中存在密钥，客户端就会在 `fetch` 前拒绝请求。其他 API 请求不会携带该
+请求头。后端只在当前解析调用中使用请求密钥，不持久化、记录或写入响应；请求未提供有效
+密钥时回退到服务端 `BRAINX_DEEPSEEK_API_KEY`。
 
 ### 启动（本地）
 
