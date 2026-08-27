@@ -180,7 +180,10 @@ test("React keeps the tested helpers wired to controls and prevents heading over
   assert.match(app, /aria-label="清除 DeepSeek API Key"/);
   assert.doesNotMatch(app, /使用偏好|保存偏好|locale|语言<select/);
   assert.match(drawer, /onPaste/);
-  assert.match(drawer, /accept="image\/jpeg,image\/png,image\/gif,image\/webp"/);
+  assert.doesNotMatch(drawer, /添加 JD 图片/);
+  assert.doesNotMatch(drawer, /type="file"/);
+  assert.match(drawer, /直接将截图粘贴到上方输入框/);
+  assert.match(drawer, /jd-image-previews.*jd-raw-field/s);
   assert.match(drawer, /disabled=\{busy \|\| !canParseJd\(rawJd, images\)\}/);
   assert.match(drawer, /useEffect\(\(\) => \{ setImageError\(""\); \}, \[open\]\);/);
   assert.match(styles, /\.current-match-heading\s*\{[^}]*min-width:\s*0;/);
