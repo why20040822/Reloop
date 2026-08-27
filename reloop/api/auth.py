@@ -155,6 +155,7 @@ def ttc_auto_login_status(sid: str, user: User = Depends(get_current_user)):
         "status": sess.status,
         "qr_png_b64": base64.b64encode(sess.qr_png).decode() if sess.qr_png else "",
         "error": sess.error,
+        "hint": sess.hint,
         "bound_name": sess.bound_name,
         "space_id": sess.space_id,
     }

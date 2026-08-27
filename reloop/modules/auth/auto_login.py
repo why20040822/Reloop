@@ -34,8 +34,8 @@ from reloop.modules.auth.feishu import decode_ttc_jwt_unverified
 
 logger = logging.getLogger(__name__)
 
-_SESSION_TTL = 360          # 登录会话最长存活(秒): pending 超时 + success 结果保留
-_PENDING_TIMEOUT = 240      # 单个 pending 会话等待扫码的最长时间(秒)
+_SESSION_TTL = 600          # 登录会话最长存活(秒): pending 超时 + success 结果保留
+_PENDING_TIMEOUT = 360      # 单个 pending 会话等待扫码的最长时间(秒)
 _QR_REFRESH_INTERVAL = 1.0  # 二维码截图刷新间隔(秒)
 _TOKEN_LS_KEYS = ("ottin-jwt-token-v2",   # TTC 真实键(2026-08-27 从其授权页 chunk 确认)
                   "access_token", "token", "Authorization",
@@ -56,6 +56,7 @@ class AutoLoginSession:
     space_id: str = ""
     bound_name: str = ""
     error: str = ""
+    hint: str = ""                    # 过程提示(如"已扫码, 正在抓取登录态")
     started_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
 
@@ -104,8 +105,8 @@ def get_session(sid: str) -> Optional[AutoLoginSession]:
 # ---------------------------------------------------------------------
 def _apply_stealth(page) -> None:
     try:
-        from playwright_stealth import stealth_sync  # type: ignore
-        stealth_sync(page)
+        from playwright_stealth import Stealth  # type: ignore
+        Stealth().apply_stealth_sync(page)
     except Exception as e:  # noqa: BLE001
         logger.warning("[autologin] stealth 未生效: %s", e)
 
@@ -224,7 +225,10 @@ def _run_login_thread(sid: str) -> None:
                     t = _extract_token_from_ls(page)
                     if t:
                         found["token"] = t
-                # 3) 刷新截图(二维码/进度)
+                # 3) 页面已离开飞书扫码页(用户已扫码确认, 正在回跳) -> 过程提示
+                if not found.get("token") and "ttcadvisory.com" in page.url:
+                    sess.hint = "已扫码, 正在抓取登录态…"
+                # 4) 刷新截图(二维码/进度)
                 try:
                     sess.qr_png = page.screenshot(type="png")
                     sess.touch()

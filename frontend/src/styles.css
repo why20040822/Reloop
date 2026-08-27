@@ -250,3 +250,5 @@ textarea { min-height: 110px; padding: 10px; resize: vertical; }
   margin: 12px auto;
   background: #fff;
 }
+
+.ttc-bind-notice { font-size: 13px; color: var(--muted); line-height: 1.6; }

@@ -224,5 +224,5 @@ export const api = {
   ttcLoginUrl: () => request<{ url: string }>("/auth/ttc/login-url"),
   bindTtc: (token: string) => request<{ ok: boolean; sync_id: string; display_name?: string }>("/auth/ttc/bind", { method: "POST", body: JSON.stringify({ token }) }),
   ttcAutoLogin: () => request<{ sid: string; status: string }>("/auth/ttc/auto-login", { method: "POST" }),
-  ttcAutoLoginStatus: (sid: string) => request<{ status: string; qr_png_b64: string; error: string; bound_name: string; space_id: string }>(`/auth/ttc/auto-login/${sid}/status`),
+  ttcAutoLoginStatus: (sid: string) => request<{ status: string; qr_png_b64: string; error: string; hint: string; bound_name: string; space_id: string }>(`/auth/ttc/auto-login/${sid}/status`),
 };

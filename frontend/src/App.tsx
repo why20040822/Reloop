@@ -82,7 +82,7 @@ function TtcAutoConnect() {
               return;
             }
             if (s.status === "pending") {
-              setMessage("请用飞书扫描下方二维码完成授权");
+              setMessage(s.hint || "请用飞书扫描下方二维码，并在手机上点「确认授权」");
               timer = window.setTimeout(() => void poll(), 1500);
               return;
             }
@@ -98,8 +98,10 @@ function TtcAutoConnect() {
   return <main className="callback-screen"><div>
     <span className="brand-mark"><img className="brand-logo" src="/reloop-logo.png" alt="" /></span>
     <h1>扫码绑定人才库</h1>
+    <p className="ttc-bind-notice">这个二维码是<strong>人才库（TTC）</strong>的登录授权，<strong>不是</strong> Reloop 登录码。请用手机飞书扫描，并在手机上<strong>点「确认授权」</strong>——成功后本页会自动跳转。</p>
     <p>{message}</p>
     {status === "pending" && qr ? <img className="ttc-qr" src={`data:image/png;base64,${qr}`} alt="TTC 登录二维码" /> : null}
+    {status === "pending" && !qr ? <p className="hint">二维码加载中，服务器浏览器正在启动（约 15~30 秒）…</p> : null}
     <div className="button-row">
       {(status === "failed" || status === "timeout" || status === "expired") && <button className="primary-button" onClick={() => window.location.reload()}>重新发起</button>}
       <button className="secondary-button" onClick={() => navigate("/settings")}>返回设置</button>
