@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { ImagePlus, X } from "lucide-react";
 import { cycleFocus, restoreFocus } from "../lib/drawerFocus";
 import { analysisToDraft, draftToAnalysis, type JDAnalysisDraft } from "../lib/jd";
 import type { JDAnalysis } from "../lib/api";
+import { readJdImage, validateJdImageFiles, type JdImage } from "../lib/jdImages";
 
 export type JDParserDrawerStatus = "input" | "parsing" | "review" | "saving";
 
 type Props = {
   open: boolean;
   rawJd: string;
+  images: JdImage[];
   status: JDParserDrawerStatus;
   analysis: JDAnalysis | null;
   error: string;
   onRawJdChange: (value: string) => void;
+  onImagesChange: (images: JdImage[]) => void;
   onParse: () => void;
   onConfirm: (analysis: JDAnalysis) => void;
   onReset: () => void;
@@ -22,6 +25,7 @@ type Props = {
 };
 
 const fields: Array<{ key: keyof JDAnalysis; label: string; multiline?: boolean }> = [
+  { key: "company_name", label: "招聘公司" },
   { key: "title", label: "岗位名称" },
   { key: "summary", label: "岗位概述", multiline: true },
   { key: "responsibilities", label: "工作职责", multiline: true },
@@ -42,10 +46,12 @@ function focusableElements(container: HTMLElement | null) {
   return Array.from(container.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex='-1'])")).filter((element) => !element.hasAttribute("hidden"));
 }
 
-export function JDParserDrawer({ open, rawJd, status, analysis, error, onRawJdChange, onParse, onConfirm, onReset, onClose, returnFocusTarget, returnFocusFallback }: Props) {
+export function JDParserDrawer({ open, rawJd, images, status, analysis, error, onRawJdChange, onImagesChange, onParse, onConfirm, onReset, onClose, returnFocusTarget, returnFocusFallback }: Props) {
   const drawerRef = useRef<HTMLElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const wasOpen = useRef(false);
   const [draft, setDraft] = useState<JDAnalysisDraft | null>(null);
+  const [imageError, setImageError] = useState("");
   const busy = status === "parsing" || status === "saving";
   const reviewing = status === "review" || status === "saving";
 
@@ -94,6 +100,16 @@ export function JDParserDrawer({ open, rawJd, status, analysis, error, onRawJdCh
 
   const updateDraft = (key: keyof JDAnalysis, value: string) => setDraft((current) => current ? { ...current, [key]: value } : current);
   const close = () => { if (!busy) onClose(); };
+  const addFiles = async (files: File[]) => {
+    const { accepted, errors } = validateJdImageFiles(files, images.length);
+    setImageError(errors.join(" "));
+    if (!accepted.length) return;
+    try {
+      onImagesChange([...images, ...await Promise.all(accepted.map((file) => readJdImage(file as File)))]);
+    } catch (reason) {
+      setImageError(reason instanceof Error ? reason.message : "图片无法读取，请重试。");
+    }
+  };
 
   return <div className="jd-drawer-layer">
     <button className="jd-drawer-backdrop" type="button" aria-label="关闭 JD 解析" onClick={close} disabled={busy} />
@@ -101,7 +117,7 @@ export function JDParserDrawer({ open, rawJd, status, analysis, error, onRawJdCh
       <header className="jd-drawer-header"><div><p>岗位匹配</p><h2 id="jd-drawer-title">解析职位描述</h2></div><button className="icon-button" type="button" aria-label="关闭 JD 解析" onClick={close} disabled={busy}><X size={18} /></button></header>
       <div className="jd-drawer-body">
         {error && <p className="notice error" role="alert">{error}</p>}
-        {!reviewing ? <label className="jd-raw-field">职位描述（JD）<textarea data-jd-initial-focus value={rawJd} disabled={busy} onChange={(event) => onRawJdChange(event.target.value)} placeholder="粘贴完整的职责、任职资格、地点与团队信息" /><small>系统会生成可编辑的结构化岗位要求。</small></label>
+        {!reviewing ? <div className="jd-input-stage"><label className="jd-raw-field">职位描述（JD）<textarea data-jd-initial-focus value={rawJd} disabled={busy} onChange={(event) => onRawJdChange(event.target.value)} onPaste={(event) => { const pasted = Array.from(event.clipboardData.files); if (pasted.length) { event.preventDefault(); void addFiles(pasted); } }} placeholder="粘贴完整的职责、任职资格、地点与团队信息" /><small>系统会生成可编辑的结构化岗位要求。</small></label><div className="jd-image-controls"><input ref={fileInputRef} className="sr-only" type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple disabled={busy} onChange={(event) => { const selected = Array.from(event.currentTarget.files || []); event.currentTarget.value = ""; void addFiles(selected); }} /><button className="secondary-button" type="button" disabled={busy || images.length >= 4} onClick={() => fileInputRef.current?.click()}><ImagePlus size={16} />添加 JD 图片</button><small>可粘贴截图或添加 JPEG、PNG、GIF、WebP 图片，最多 4 张，每张不超过 8 MiB。</small></div>{imageError && <p className="notice error" role="alert">{imageError}</p>}{images.length > 0 && <div className="jd-image-previews">{images.map((image) => <figure key={image.id} className="jd-image-preview"><img src={image.data_url} alt={image.filename} /><button className="icon-button" type="button" aria-label={`移除 ${image.filename}`} onClick={() => onImagesChange(images.filter((item) => item.id !== image.id))}><X size={15} /></button><figcaption>{image.filename}</figcaption></figure>)}</div>}</div>
           : <><div className="jd-review-heading"><div><strong>核对解析结果</strong><small>列表字段每行一项，可直接修改。</small></div><button className="text-button" type="button" onClick={onReset} disabled={busy}>解析新 JD</button></div>{draft && <div className="jd-field-grid">{fields.map(({ key, label, multiline }, index) => <label key={key}>{label}{multiline ? <textarea data-jd-initial-focus={index === 0 ? true : undefined} value={draft[key]} disabled={busy} onChange={(event) => updateDraft(key, event.target.value)} /> : <input data-jd-initial-focus={index === 0 ? true : undefined} value={draft[key]} disabled={busy} onChange={(event) => updateDraft(key, event.target.value)} />}</label>)}</div>}</>}
       </div>
       <footer className="jd-drawer-footer">{reviewing ? <><button className="secondary-button" type="button" onClick={close} disabled={busy}>取消</button><button className="primary-button" type="button" disabled={busy || !draft} onClick={() => draft && onConfirm(draftToAnalysis(draft))}>{status === "saving" ? "正在保存…" : "确认并开始匹配"}</button></> : <><button className="secondary-button" type="button" onClick={close} disabled={busy}>取消</button><button className="primary-button" type="button" disabled={busy || !rawJd.trim()} onClick={onParse}>{status === "parsing" ? "正在解析…" : "解析 JD"}</button></>}</footer>

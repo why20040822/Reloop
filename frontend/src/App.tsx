@@ -2,12 +2,13 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUpRight, BriefcaseBusiness, ChevronDown, ChevronRight, CircleHelp, Database, Heart, House,
-  LogIn, Menu, Plus, Search, Settings, UsersRound, X,
+  Eye, EyeOff, LogIn, Menu, Plus, Search, Settings, UsersRound, X,
 } from "lucide-react";
 import { DirectGlassSegment } from "./components/DirectGlassSegment";
 import { JDParserDrawer, type JDParserDrawerStatus } from "./components/JDParserDrawer";
-import { api, AUTH_CHANGE_EVENT, config, type CurrentUser, type Interaction, type JDAnalysis, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
-import { positionHasParsedJd } from "./lib/jd";
+import { api, AUTH_CHANGE_EVENT, config, deepseekApiKey, type CurrentUser, type Interaction, type JDAnalysis, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
+import { formatPositionLabel, positionHasParsedJd } from "./lib/jd";
+import type { JdImage } from "./lib/jdImages";
 import { saveThenRefreshPosition } from "./lib/positionSave";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./lib/sidebar";
 import { scrubTtcCallbackHash } from "./lib/ttcCallback";
@@ -179,7 +180,7 @@ function Dashboard() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<DashboardMode>("activity");
   const [positions, setPositions] = useState<Position[]>([]);
-  const [selectedPosition, setSelectedPosition] = useState("");
+  const [selectedPositionId, setSelectedPositionId] = useState<number | null>(null);
   const [talents, setTalents] = useState<Talent[]>([]);
   const [matches, setMatches] = useState<Recommendation[]>([]);
   const [loading, setLoading] = useState(true);
@@ -187,6 +188,7 @@ function Dashboard() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerStatus, setDrawerStatus] = useState<JDParserDrawerStatus>("input");
   const [drawerRawJd, setDrawerRawJd] = useState("");
+  const [drawerImages, setDrawerImages] = useState<JdImage[]>([]);
   const [drawerAnalysis, setDrawerAnalysis] = useState<JDAnalysis | null>(null);
   const [drawerError, setDrawerError] = useState("");
   const [refreshWarning, setRefreshWarning] = useState("");
@@ -194,19 +196,19 @@ function Dashboard() {
   const drawerReturnTarget = useRef<HTMLElement | null>(null);
   const drawerReturnFallback = useRef<HTMLElement | null>(null);
 
-  useEffect(() => { void (async () => { try { const [people, roles] = await Promise.all([api.listTalents(), api.listPositions()]); setTalents(people); setPositions(roles); setSelectedPosition((value) => value || roles[0]?.position_name || ""); } catch (reason) { setError(errorMessage(reason)); } finally { setLoading(false); } })(); }, []);
+  useEffect(() => { void (async () => { try { const [people, roles] = await Promise.all([api.listTalents(), api.listPositions()]); setTalents(people); setPositions(roles); setSelectedPositionId((value) => value || roles[0]?.id || null); } catch (reason) { setError(errorMessage(reason)); } finally { setLoading(false); } })(); }, []);
   useEffect(() => {
-    if (mode !== "match" || !selectedPosition) return;
+    if (mode !== "match" || selectedPositionId == null) return;
     let active = true;
     const load = async () => {
       setLoading(true); setError("");
       try {
-        const first = await api.recommend(selectedPosition, "match");
+        const first = await api.recommend(selectedPositionId, "match");
         if (!active) return;
         setMatches(first.top_n || []);
         if (first.computing || first.phase === "preview") {
           const poll = async () => {
-            const next = await api.recommendationResult(selectedPosition, "match");
+            const next = await api.recommendationResult(selectedPositionId, "match");
             if (!active) return;
             if (next.status === "done") setMatches(next.top_n || []);
             else if (next.status === "running") setTimeout(() => void poll(), 1800);
@@ -218,13 +220,14 @@ function Dashboard() {
     };
     void load();
     return () => { active = false; };
-  }, [mode, selectedPosition]);
+  }, [mode, selectedPositionId]);
 
-  const selected = positions.find((position) => position.position_name === selectedPosition);
+  const selected = positions.find((position) => position.id === selectedPositionId);
   const openParser = (position?: Position, opener?: HTMLElement | null) => {
     drawerReturnTarget.current = opener || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     drawerReturnFallback.current = matchSegmentRef.current?.querySelector<HTMLElement>("[data-segment-value='match']") || null;
     setDrawerRawJd(position?.jd_text || "");
+    setDrawerImages([]);
     setDrawerAnalysis(null);
     setDrawerError("");
     setRefreshWarning("");
@@ -235,7 +238,9 @@ function Dashboard() {
     setDrawerStatus("parsing");
     setDrawerError("");
     try {
-      setDrawerAnalysis(await api.parseJd(drawerRawJd));
+      const result = await api.parseJd(drawerRawJd, drawerImages.map(({ filename, data_url }) => ({ filename, data_url })));
+      setDrawerRawJd(result.source_text);
+      setDrawerAnalysis(result.analysis);
       setDrawerStatus("review");
     } catch (reason) {
       setDrawerError(errorMessage(reason));
@@ -247,11 +252,14 @@ function Dashboard() {
     setDrawerError("");
     try {
       const result = await saveThenRefreshPosition(
-        () => api.setPosition({ position_name: selected?.position_name || analysis.title, jd_text: drawerRawJd, jd_analysis: analysis }),
+        () => {
+          const companyName = analysis.company_name?.trim() || null;
+          return api.setPosition({ position_name: selected?.position_name || analysis.title, company_name: companyName, jd_text: drawerRawJd, jd_analysis: { ...analysis, company_name: companyName } });
+        },
         () => api.listPositions(),
       );
-      setPositions(result.positions || [result.position, ...positions.filter((position) => position.position_name !== result.position.position_name)]);
-      setSelectedPosition(result.position.position_name);
+      setPositions(result.positions || [result.position, ...positions.filter((position) => position.id !== result.position.id)]);
+      setSelectedPositionId(result.position.id);
       setRefreshWarning(result.refreshError ? "岗位已保存，但岗位列表未能刷新。已使用刚保存的岗位继续匹配。" : "");
       setDrawerOpen(false);
       setMode("match");
@@ -265,14 +273,14 @@ function Dashboard() {
 
   return <><div className="dashboard-page">
     <PageHeading title="今天最该联系谁" action={<DirectGlassSegment containerRef={matchSegmentRef} value={mode} options={[{ value: "activity", label: "活跃优先" }, { value: "match", label: "岗位匹配" }]} onChange={(value) => { const nextMode = value as DashboardMode; if (nextMode === "match" && !positionHasParsedJd(selected)) { openParser(selected); return; } setMode(nextMode); }} ariaLabel="选择人才展示方式" />} />
-    {mode === "match" && <div className="match-controls"><label className="position-picker">当前岗位<span className="position-select"><select value={selectedPosition} disabled={positions.length === 0} onChange={(event) => { const nextPosition = positions.find((position) => position.position_name === event.target.value); if (!positionHasParsedJd(nextPosition)) { openParser(nextPosition, event.currentTarget); setSelectedPosition(event.target.value); setMode("activity"); return; } setSelectedPosition(event.target.value); }}>{positions.length === 0 && <option value="">暂无岗位</option>}{positions.map((position) => <option key={position.id} value={position.position_name}>{position.position_name}</option>)}</select><ChevronDown size={15} aria-hidden="true" /></span></label><button className="secondary-button" type="button" onClick={(event) => openParser(selected, event.currentTarget)}>解析新 JD</button></div>}
+    {mode === "match" && <div className="match-controls"><label className="position-picker">当前岗位<span className="position-select"><select value={selectedPositionId == null ? "" : String(selectedPositionId)} disabled={positions.length === 0} onChange={(event) => { const nextPosition = positions.find((position) => position.id === Number(event.target.value)); if (!nextPosition) return; setSelectedPositionId(nextPosition.id); if (!positionHasParsedJd(nextPosition)) { openParser(nextPosition, event.currentTarget); setMode("activity"); } }}>{positions.length === 0 && <option value="">暂无岗位</option>}{positions.map((position) => <option key={position.id} value={String(position.id)}>{formatPositionLabel(position)}</option>)}</select><ChevronDown size={15} aria-hidden="true" /></span></label><button className="secondary-button" type="button" onClick={(event) => openParser(selected, event.currentTarget)}>解析新 JD</button></div>}
     {error && <Notice tone="error">{error}</Notice>}
     {refreshWarning && <Notice tone="info">{refreshWarning}</Notice>}
     <button className="talent-summary" type="button" onClick={() => navigate("/talents")}><span><small>{mode === "match" ? "岗位匹配候选" : "近 7 天活跃人才"}</small><strong>{rows.length}</strong></span><span>前往人才库 <ArrowUpRight size={16} /></span></button>
-    <section className="talent-focus"><div className="section-heading"><h2>{mode === "match" ? `${selectedPosition || "岗位"}匹配人才` : "最近活跃人才"}</h2><button className="text-button" onClick={() => navigate("/talents")}>查看全部 <ChevronRight size={15} /></button></div>
+    <section className="talent-focus"><div className="section-heading"><h2 className="current-match-heading">{mode === "match" ? `${selected ? formatPositionLabel(selected) : "岗位"}匹配人才` : "最近活跃人才"}</h2><button className="text-button" onClick={() => navigate("/talents")}>查看全部 <ChevronRight size={15} /></button></div>
       {loading ? <Loading /> : rows.length === 0 ? <Empty text="暂时没有可展示的人才。" /> : <div className="focus-list">{rows.map((row, index) => <button type="button" className="focus-row" key={row.talent.id} onClick={() => navigate(`/talent/${row.talent.id}`)}><span className="rank">{String(index + 1).padStart(2, "0")}</span><span className="focus-person"><Avatar person={row.talent} size="large" /><span><strong>{row.talent.name}</strong><small>{row.talent.base_location || "地点待补充"}</small></span></span><span className="focus-current"><small>当前经历</small><strong>{row.talent.company || "—"} · {row.talent.position || "—"}</strong></span><span className="focus-experience"><small>工作经历</small><strong>{row.talent.work_years ? `${row.talent.work_years} 年 · ${row.talent.company || "—"}` : "待补充"}</strong></span><span className="focus-education"><small>毕业院校</small><strong>{row.talent.education || "待补充"}</strong></span><span className="focus-signal"><small>最新动态</small><strong>{row.reason}</strong></span><span className="focus-score"><strong>{row.score == null ? "—" : Math.round(row.score * 100)}</strong><small>{mode === "match" ? "匹配分" : "价值分"}</small></span><span className="focus-activity"><small>最近活跃</small><strong>{relativeActivity(row.activeAt)}</strong></span><ChevronRight size={16} /></button>)}</div>}
     </section>
-  </div><JDParserDrawer open={drawerOpen} rawJd={drawerRawJd} status={drawerStatus} analysis={drawerAnalysis} error={drawerError} returnFocusTarget={drawerReturnTarget.current} returnFocusFallback={drawerReturnFallback.current} onRawJdChange={(value) => { setDrawerRawJd(value); setDrawerError(""); }} onParse={() => void parseJd()} onConfirm={(analysis) => void confirmJd(analysis)} onReset={() => { setDrawerStatus("input"); setDrawerAnalysis(null); setDrawerError(""); }} onClose={() => setDrawerOpen(false)} /></>;
+  </div><JDParserDrawer open={drawerOpen} rawJd={drawerRawJd} images={drawerImages} status={drawerStatus} analysis={drawerAnalysis} error={drawerError} returnFocusTarget={drawerReturnTarget.current} returnFocusFallback={drawerReturnFallback.current} onRawJdChange={(value) => { setDrawerRawJd(value); setDrawerError(""); }} onImagesChange={setDrawerImages} onParse={() => void parseJd()} onConfirm={(analysis) => void confirmJd(analysis)} onReset={() => { setDrawerStatus("input"); setDrawerAnalysis(null); setDrawerError(""); }} onClose={() => setDrawerOpen(false)} /></>;
 }
 
 function TalentList() {
@@ -310,13 +318,14 @@ function TalentDetail() {
 
 function Positions() {
   const [positions, setPositions] = useState<Position[]>([]);
+  const [company, setCompany] = useState("");
   const [name, setName] = useState("");
   const [jd, setJd] = useState("");
   const [message, setMessage] = useState("");
   const load = async () => setPositions(await api.listPositions());
   useEffect(() => { void load(); }, []);
-  return <div><PageHeading title="岗位管理" /><div className="positions-layout"><section className="panel"><h2>已生效岗位</h2>{positions.length ? positions.map((position) => <article className="position-card" key={position.id}><div><strong>{position.position_name}</strong><p>{position.jd_text || "暂未填写 JD"}</p></div><button className="icon-button danger" aria-label={`删除 ${position.position_name}`} onClick={async () => { if (confirm(`删除「${position.position_name}」？`)) { await api.deletePosition(position.id); await load(); } }}><X size={16} /></button></article>) : <Empty text="还没有在招岗位。" />}</section>
-    <form className="panel position-form" onSubmit={async (event) => { event.preventDefault(); if (!name.trim()) return; await api.setPosition({ position_name: name.trim(), jd_text: jd.trim() }); setName(""); setJd(""); setMessage("岗位已保存。"); await load(); }}><h2>新增或更新岗位</h2><label>岗位名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：商业分析师" required /></label><label>职位描述（JD）<textarea value={jd} onChange={(event) => setJd(event.target.value)} placeholder="填写职责、目标和关键能力" /></label><button className="primary-button"><Plus size={16} />保存岗位</button>{message && <Notice tone="success">{message}</Notice>}</form></div>
+  return <div><PageHeading title="岗位管理" /><div className="positions-layout"><section className="panel"><h2>已生效岗位</h2>{positions.length ? positions.map((position) => <article className="position-card" key={position.id}><div><strong>{formatPositionLabel(position)}</strong><p>{position.jd_text || "暂未填写 JD"}</p></div><button className="icon-button danger" aria-label={`删除 ${formatPositionLabel(position)}`} onClick={async () => { if (confirm(`删除「${formatPositionLabel(position)}」？`)) { await api.deletePosition(position.id); await load(); } }}><X size={16} /></button></article>) : <Empty text="还没有在招岗位。" />}</section>
+    <form className="panel position-form" onSubmit={async (event) => { event.preventDefault(); if (!name.trim()) return; await api.setPosition({ company_name: company.trim() || null, position_name: name.trim(), jd_text: jd.trim() }); setCompany(""); setName(""); setJd(""); setMessage("岗位已保存。"); await load(); }}><h2>新增或更新岗位</h2><label>招聘公司（可选）<input value={company} onChange={(event) => setCompany(event.target.value)} placeholder="例如：北辰智能" /></label><label>岗位名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：商业分析师" required /></label><label>职位描述（JD）<textarea value={jd} onChange={(event) => setJd(event.target.value)} placeholder="填写职责、目标和关键能力" /></label><button className="primary-button"><Plus size={16} />保存岗位</button>{message && <Notice tone="success">{message}</Notice>}</form></div>
   </div>;
 }
 
@@ -325,9 +334,10 @@ function SettingsPage({ loginError, authRevision, onLogin, onConnect }: { loginE
   const [user, setUser] = useState<CurrentUser | null>(null);
   const [sync, setSync] = useState<SyncStatus | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
-  const [preferenceMessage, setPreferenceMessage] = useState("");
   const [advancedMessage, setAdvancedMessage] = useState("");
   const [syncError, setSyncError] = useState("");
+  const [storedDeepseekKey, setStoredDeepseekKey] = useState(deepseekApiKey.read());
+  const [showDeepseekKey, setShowDeepseekKey] = useState(false);
   const refreshUser = async () => { if (!config.auth()) { setUser(null); return; } try { setUser(await api.me()); } catch { config.clearAuth(); setUser(null); } };
   useEffect(() => { void refreshUser(); }, [authRevision]);
   const startSync = async () => {
@@ -338,24 +348,20 @@ function SettingsPage({ loginError, authRevision, onLogin, onConnect }: { loginE
       await poll();
     } catch (error) { setSyncError(errorMessage(error)); }
   };
-  const savePreferences = () => {
-    setCfg(config.write({ locale: cfg.locale }));
-    setPreferenceMessage("偏好已保存。");
-  };
   const saveAdvancedSettings = () => {
     setCfg(config.write({ mode: cfg.mode, apiBase: cfg.apiBase }));
+    deepseekApiKey.write(storedDeepseekKey);
     setAdvancedMessage("高级设置已保存。");
   };
   return <div className="settings-page">
     <PageHeading
       title="设置"
-      description="管理账号、人才库与使用偏好。"
+      description="管理账号与人才库连接。"
       action={<button className="settings-help-button" type="button" aria-label="查看使用帮助" aria-expanded={helpOpen} title="使用帮助" onClick={() => setHelpOpen((open) => !open)}><CircleHelp size={19} /></button>}
     />
     {helpOpen && <section className="settings-help" aria-label="使用帮助"><strong>使用帮助</strong><p>访客模式读取共享人才库；登录后会自动连接并同步你的私有人才库。</p><p>真实 API、样本数据与后端地址位于高级设置中，普通使用无需调整。</p></section>}
     <section className="settings-panel settings-account-panel"><h2>账户与人才库</h2>{loginError && <Notice tone="error">{loginError}</Notice>}{user ? <><p>已登录为 <strong>{user.display_name}</strong> · 人才池 {user.pool_count} 人</p><p>{user.ttc_connected ? `已连接：${user.ttc_bound_name || "你的 TTC 人才库"}` : "尚未连接你的 TTC 人才库"}</p><div className="button-row">{!user.ttc_connected && <button className="secondary-button" type="button" onClick={onConnect}>连接人才库</button>}<button className="primary-button" type="button" onClick={() => void startSync()}>同步人才库</button><button className="text-button" type="button" onClick={() => { config.clearAuth(); setUser(null); }}>退出登录</button></div></> : <><p>登录飞书后，系统会自动连接并同步你的私有人才库。</p><button className="primary-button" type="button" onClick={onLogin}><LogIn size={16} />登录飞书</button></>}{syncError && <Notice tone="error">{syncError}</Notice>}{sync && <Notice tone={sync.status === "failed" ? "error" : "info"}>同步状态：{sync.status}{sync.total ? ` · ${sync.current || sync.processed || 0}/${sync.total}` : ""}{sync.error ? ` · ${sync.error}` : ""}</Notice>}</section>
-    <section className="settings-panel"><h2>使用偏好</h2><label>语言<select value={cfg.locale} onChange={(event) => { setCfg({ ...cfg, locale: event.target.value as "zh-CN" | "en-US" }); setPreferenceMessage(""); }}><option value="zh-CN">中文</option><option value="en-US">English</option></select></label><button className="primary-button settings-save-button" type="button" onClick={savePreferences}>保存偏好</button>{preferenceMessage && <Notice tone="success">{preferenceMessage}</Notice>}</section>
-    <details className="advanced-settings"><summary><span className="advanced-settings-title"><Database size={18} /><span><strong>高级设置</strong><small>数据来源与后端连接</small></span></span><ChevronRight className="advanced-settings-chevron" size={17} /></summary><div className="advanced-settings-content"><div className="setting-group"><label>数据模式</label><DirectGlassSegment value={cfg.mode} options={[{ value: "live", label: "真实 API" }, { value: "mock", label: "样本数据" }]} onChange={(mode) => { setCfg({ ...cfg, mode: mode as "live" | "mock" }); setAdvancedMessage(""); }} ariaLabel="数据模式" /></div><label>后端地址（可选）<input value={cfg.apiBase} onChange={(event) => { setCfg({ ...cfg, apiBase: event.target.value }); setAdvancedMessage(""); }} placeholder="留空 = 同源后端" /></label><button className="primary-button settings-save-button" type="button" onClick={saveAdvancedSettings}>保存高级设置</button>{advancedMessage && <Notice tone="success">{advancedMessage}</Notice>}</div></details>
+    <details className="advanced-settings"><summary><span className="advanced-settings-title"><Database size={18} /><span><strong>高级设置</strong><small>数据来源与后端连接</small></span></span><ChevronRight className="advanced-settings-chevron" size={17} /></summary><div className="advanced-settings-content"><div className="setting-group"><label>数据模式</label><DirectGlassSegment value={cfg.mode} options={[{ value: "live", label: "真实 API" }, { value: "mock", label: "样本数据" }]} onChange={(mode) => { setCfg({ ...cfg, mode: mode as "live" | "mock" }); setAdvancedMessage(""); }} ariaLabel="数据模式" /></div><label>后端地址（可选）<input value={cfg.apiBase} onChange={(event) => { setCfg({ ...cfg, apiBase: event.target.value }); setAdvancedMessage(""); }} placeholder="留空 = 同源后端" /></label><label>DeepSeek API Key <small className="browser-only-note">仅保存在此浏览器</small><span className="secret-key-input"><input type={showDeepseekKey ? "text" : "password"} value={storedDeepseekKey} onChange={(event) => { setStoredDeepseekKey(event.target.value); setAdvancedMessage(""); }} autoComplete="off" /><button className="icon-button" type="button" aria-label={showDeepseekKey ? "隐藏 DeepSeek API Key" : "显示 DeepSeek API Key"} title={showDeepseekKey ? "隐藏" : "显示"} onClick={() => setShowDeepseekKey((show) => !show)}>{showDeepseekKey ? <EyeOff size={16} /> : <Eye size={16} />}</button><button className="icon-button danger" type="button" aria-label="清除 DeepSeek API Key" title="清除" onClick={() => { deepseekApiKey.clear(); setStoredDeepseekKey(""); setShowDeepseekKey(false); setAdvancedMessage(""); }}><X size={16} /></button></span></label><button className="primary-button settings-save-button" type="button" onClick={saveAdvancedSettings}>保存高级设置</button>{advancedMessage && <Notice tone="success">{advancedMessage}</Notice>}</div></details>
   </div>;
 }
 

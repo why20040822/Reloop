@@ -51,7 +51,9 @@ test("JD drawer declares its accessible controls without browser model credentia
   assert.match(drawerSource, /解析 JD/);
   assert.match(drawerSource, /确认并开始匹配/);
   assert.match(drawerSource, /解析新 JD/);
-  assert.doesNotMatch(apiSource, /localStorage\.(?:getItem|setItem)\([^\n]*(?:deepseek|apiKey)/i);
+  assert.match(apiSource, /const DEEPSEEK_API_KEY = "reloop\.deepseekApiKey"/);
+  assert.match(apiSource, /headers: requestKey \? \{ "X-DeepSeek-Api-Key": requestKey \} : undefined/);
+  assert.doesNotMatch(apiSource, /const defaultConfig:[^\n]*deepseek/i);
 });
 
 test("drawer focus cycling wraps Tab and Shift+Tab within available controls", () => {

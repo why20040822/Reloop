@@ -14,6 +14,7 @@ export type Talent = {
   notes?: string | null;
 };
 export type JDAnalysis = {
+  company_name?: string | null;
   title: string;
   summary: string;
   responsibilities: string[];
@@ -28,7 +29,9 @@ export type JDAnalysis = {
   reporting_line: string;
   language_requirements: string[];
 };
-export type Position = { id: number; position_name: string; jd_text?: string | null; jd_analysis?: JDAnalysis | null; jd_analysis_version?: string | null; is_active: boolean };
+export type Position = { id: number; position_name: string; company_name?: string | null; jd_text?: string | null; jd_analysis?: JDAnalysis | null; jd_analysis_version?: string | null; is_active: boolean };
+export type JDParseImage = { data_url: string; filename: string };
+export type JDParseResponse = { analysis: JDAnalysis; source_text: string };
 export type Interaction = { interaction_type: string; summary?: string | null; occurred_at: string };
 export type Recommendation = {
   rank: number;
@@ -68,14 +71,15 @@ export type CurrentUser = {
   ttc_space_id?: string | null;
 };
 
-type Config = { mode: "live" | "mock"; apiBase: string; ownerId: string; locale: "zh-CN" | "en-US" };
+type Config = { mode: "live" | "mock"; apiBase: string; ownerId: string };
 type Auth = { token: string; user: { user_id: string; display_name: string } };
 
 const CFG_KEY = "reloop.cfg";
 const AUTH_KEY = "reloop.auth";
+const DEEPSEEK_API_KEY = "reloop.deepseekApiKey";
 export const AUTH_CHANGE_EVENT = "reloop:auth-change";
 const LOCAL_API = "http://127.0.0.1:8000";
-const defaultConfig: Config = { mode: "live", apiBase: "", ownerId: "guest_shared", locale: "zh-CN" };
+const defaultConfig: Config = { mode: "live", apiBase: "", ownerId: "guest_shared" };
 
 function staticPreview() {
   return location.protocol === "file:" ||
@@ -90,7 +94,16 @@ function apiBase() {
 
 export const config = {
   read(): Config {
-    try { return { ...defaultConfig, ...JSON.parse(localStorage.getItem(CFG_KEY) || "{}") }; }
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(CFG_KEY) || "{}");
+      if (!stored || typeof stored !== "object") return { ...defaultConfig };
+      const value = stored as Partial<Config>;
+      return {
+        mode: value.mode === "mock" ? "mock" : "live",
+        apiBase: typeof value.apiBase === "string" ? value.apiBase : defaultConfig.apiBase,
+        ownerId: typeof value.ownerId === "string" ? value.ownerId : defaultConfig.ownerId,
+      };
+    }
     catch { return { ...defaultConfig }; }
   },
   write(patch: Partial<Config>): Config {
@@ -109,6 +122,21 @@ export const config = {
   clearAuth() {
     localStorage.removeItem(AUTH_KEY);
     window.dispatchEvent(new Event(AUTH_CHANGE_EVENT));
+  },
+};
+
+export const deepseekApiKey = {
+  read(): string {
+    try { return (localStorage.getItem(DEEPSEEK_API_KEY) || "").trim(); }
+    catch { return ""; }
+  },
+  write(value: string) {
+    try { localStorage.setItem(DEEPSEEK_API_KEY, value.trim()); }
+    catch { /* Browser storage may be unavailable in privacy-restricted contexts. */ }
+  },
+  clear() {
+    try { localStorage.removeItem(DEEPSEEK_API_KEY); }
+    catch { /* Browser storage may be unavailable in privacy-restricted contexts. */ }
   },
 };
 
@@ -149,7 +177,7 @@ const mockTalents: Talent[] = [
   { id: 1, name: "张韵", base_location: "上海", company: "字节跳动", position: "商业分析师", work_years: 8, education: "复旦大学", skills: ["商业分析", "增长", "SQL"], value_score: .86, tendency_score: .78, last_active_at: new Date(Date.now() - 3600000).toISOString(), tags: ["已关注"] },
   { id: 2, name: "李哲", base_location: "深圳", company: "腾讯", position: "数据产品经理", work_years: 7, education: "中山大学", skills: ["数据策略", "A/B Test"], value_score: .82, tendency_score: .74, last_active_at: new Date(Date.now() - 10800000).toISOString() },
 ];
-let mockPositions: Position[] = [{ id: 1, position_name: "商业分析师", jd_text: "负责业务分析、增长策略与经营复盘", jd_analysis: { title: "商业分析师", summary: "负责业务分析、增长策略与经营复盘。", responsibilities: ["业务分析", "增长策略", "经营复盘"], required_skills: ["SQL", "商业分析"], preferred_skills: ["Python"], experience: "3 年以上", education: "本科及以上", location: "上海", industry_keywords: ["互联网", "增长"], salary_range: "面议", team_size: "待确认", reporting_line: "业务负责人", language_requirements: ["中文"] }, is_active: true }];
+let mockPositions: Position[] = [{ id: 1, company_name: "北辰智能（演示）", position_name: "AI 产品经理（演示）", jd_text: "负责业务分析、增长策略与经营复盘", jd_analysis: { company_name: "北辰智能（演示）", title: "AI 产品经理（演示）", summary: "负责业务分析、增长策略与经营复盘。", responsibilities: ["业务分析", "增长策略", "经营复盘"], required_skills: ["SQL", "商业分析"], preferred_skills: ["Python"], experience: "3 年以上", education: "本科及以上", location: "上海", industry_keywords: ["互联网", "增长"], salary_range: "面议", team_size: "待确认", reporting_line: "业务负责人", language_requirements: ["中文"] }, is_active: true }];
 const mockInteractions = new Map<number, Interaction[]>();
 
 export const api = {
@@ -182,13 +210,18 @@ export const api = {
     return request<{ ok: boolean; followed?: boolean }>(`/talents/${id}/follow`, { method: "POST" });
   },
   async listPositions() { return isMock() ? mockPositions.filter((item) => item.is_active) : request<Position[]>("/positions"); },
-  async parseJd(jdText: string) {
-    if (isMock()) return { title: "待确认岗位", summary: jdText.trim(), responsibilities: ["根据 JD 执行岗位职责"], required_skills: ["待确认"], preferred_skills: ["待确认"], experience: "待确认", education: "待确认", location: "待确认", industry_keywords: ["待确认"], salary_range: "待确认", team_size: "待确认", reporting_line: "待确认", language_requirements: ["中文"] } satisfies JDAnalysis;
-    return request<JDAnalysis>("/positions/parse-jd", { method: "POST", body: JSON.stringify({ jd_text: jdText }) });
+  async parseJd(jdText: string, images: JDParseImage[] = []) {
+    if (isMock()) return { analysis: { title: "待确认岗位", summary: jdText.trim() || "已从图片提取职位描述", responsibilities: ["根据 JD 执行岗位职责"], required_skills: ["待确认"], preferred_skills: ["待确认"], experience: "待确认", education: "待确认", location: "待确认", industry_keywords: ["待确认"], salary_range: "待确认", team_size: "待确认", reporting_line: "待确认", language_requirements: ["中文"] }, source_text: jdText.trim() || "已从图片提取职位描述" } satisfies JDParseResponse;
+    const requestKey = deepseekApiKey.read();
+    return request<JDParseResponse>("/positions/parse-jd", {
+      method: "POST",
+      headers: requestKey ? { "X-DeepSeek-Api-Key": requestKey } : undefined,
+      body: JSON.stringify({ jd_text: jdText, images }),
+    });
   },
-  async setPosition(body: Pick<Position, "position_name" | "jd_text" | "jd_analysis">) {
+  async setPosition(body: Pick<Position, "position_name" | "company_name" | "jd_text" | "jd_analysis">) {
     if (isMock()) {
-      const found = mockPositions.find((item) => item.position_name === body.position_name);
+      const found = mockPositions.find((item) => item.position_name === body.position_name && item.company_name === body.company_name);
       if (found) return Object.assign(found, body);
       const created = { id: Date.now(), ...body, is_active: true };
       mockPositions = [created, ...mockPositions];
@@ -200,15 +233,17 @@ export const api = {
     if (isMock()) { mockPositions = mockPositions.filter((item) => item.id !== id); return { ok: true }; }
     return request<{ ok: boolean }>(`/positions/${id}`, { method: "DELETE" });
   },
-  recommend(positionName: string, sortBy = "match", activity?: number, match?: number) {
+  recommend(position: number | string, sortBy = "match", activity?: number, match?: number) {
     if (isMock()) return Promise.resolve<RecommendResult>({ phase: "final", cached: true, top_n: mockTalents.map((talent, index) => ({ rank: index + 1, talent_id: talent.id, name: talent.name, company: talent.company, position: talent.position, base_location: talent.base_location, work_years: talent.work_years, education: talent.education, score: .9 - index * .12, contact_reason: "综合匹配稳定，建议结合近期动态推进。" })) });
-    const query = new URLSearchParams({ position_name: positionName, sort_by: sortBy });
+    const query = new URLSearchParams({ sort_by: sortBy });
+    query.set(typeof position === "number" ? "position_id" : "position_name", String(position));
     if (activity != null) query.set("w_activity", String(activity));
     if (match != null) query.set("w_match", String(match));
     return request<RecommendResult>(`/recommend/compute?${query}`, { method: "POST" });
   },
-  recommendationResult(positionName: string, sortBy = "match", activity?: number, match?: number) {
-    const query = new URLSearchParams({ position_name: positionName, sort_by: sortBy });
+  recommendationResult(position: number | string, sortBy = "match", activity?: number, match?: number) {
+    const query = new URLSearchParams({ sort_by: sortBy });
+    query.set(typeof position === "number" ? "position_id" : "position_name", String(position));
     if (activity != null) query.set("w_activity", String(activity));
     if (match != null) query.set("w_match", String(match));
     return request<RecommendResult>(`/recommend/result?${query}`);
