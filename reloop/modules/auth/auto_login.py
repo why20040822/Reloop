@@ -282,7 +282,23 @@ def _run_login_thread(sid: str) -> None:
                         logger.info("[autologin] sid=%s localStorage keys: %s", sid, (ls_keys or "(empty)")[:200])
                 except Exception:  # noqa: BLE001
                     pass
-                # 4) 页面已离开飞书扫码页(用户已扫码确认, 正在回跳) -> 过程提示
+                # 4) 飞书授权确认页(扫码后网页端还需再点一次"同意授权") -> 自动点击
+                try:
+                    if "authen/v1/index" in page.url or "authorization" in (page.title() or "").lower():
+                        btns = page.locator("button:visible, div[role='button']:visible, a:visible[href]")
+                        for i in range(min(btns.count(), 8)):
+                            b = btns.nth(i)
+                            try:
+                                txt = (b.text_content() or "").strip().lower()
+                                if txt and any(k in txt for k in ("同意", "授权", "允许", "allow", "authorize", "confirm", "accept")):
+                                    b.click(timeout=2000)
+                                    logger.info("[autologin] sid=%s 已点击授权确认: %r", sid, txt[:20])
+                                    break
+                            except Exception:  # noqa: BLE001
+                                continue
+                except Exception:  # noqa: BLE001
+                    pass
+                # 5) 页面已离开飞书扫码页(用户已扫码确认, 正在回跳) -> 过程提示
                 if not found.get("token") and "ttcadvisory.com" in page.url:
                     sess.hint = "已扫码, 正在抓取登录态…"
                 # 5) 刷新截图(二维码/进度)
