@@ -6,7 +6,7 @@ import httpx
 from pydantic import ValidationError
 
 from reloop.config import settings
-from reloop.schemas.jd import JDAnalysis
+from reloop.schemas.jd import JDAnalysis, JDParseResponse
 
 
 class JDParserUnavailable(RuntimeError):
@@ -17,20 +17,45 @@ class JDParserError(RuntimeError):
     """Raised when DeepSeek cannot produce a valid structured JD."""
 
 
-def build_jd_messages(jd_text: str) -> list[dict[str, str]]:
+def build_jd_messages(
+    jd_text: str,
+    image_data_urls: list[str] | None = None,
+) -> list[dict[str, str | list[dict]]]:
     """Build the constrained chat prompt without exposing configuration values."""
+    images = image_data_urls or []
     return [
         {
             "role": "system",
             "content": (
-                "你是招聘岗位分析助手。仅返回 JSON 对象，且必须包含 title、summary、"
-                "responsibilities、required_skills、preferred_skills、experience、education、"
-                "location、industry_keywords、salary_range、team_size、reporting_line、"
-                "language_requirements。无法从 JD 得知的标量字段使用“未提供”，"
+                "你是招聘岗位分析助手。仅返回 JSON 对象，顶层必须包含 analysis 和 source_text。"
+                "analysis 必须包含 title、summary、responsibilities、required_skills、preferred_skills、"
+                "experience、education、location、industry_keywords、salary_range、team_size、"
+                "reporting_line、language_requirements、company_name。仅提取 JD 中明确写出的招聘公司；"
+                "公司未写明或不确定时 company_name 必须为 JSON null。无法从 JD 得知的其他标量字段使用“未提供”，"
                 "列表字段使用 [“未提供”]。所有列表字段必须是非空字符串数组。"
+                "当提供图片时，source_text 必须是完整、可编辑的 JD 转写文本。"
             ),
         },
-        {"role": "user", "content": jd_text},
+        {
+            "role": "user",
+            "content": (
+                [
+                    {
+                        "type": "text",
+                        "text": (
+                            "请分析以下补充文本和图片中的职位描述。"
+                            f"补充文本：{jd_text or '未提供'}"
+                        ),
+                    },
+                    *[
+                        {"type": "image_url", "image_url": {"url": image_url}}
+                        for image_url in images
+                    ],
+                ]
+                if images
+                else jd_text
+            ),
+        },
     ]
 
 
@@ -41,22 +66,29 @@ class DeepSeekJDParser:
         api_key: str | None = None,
         base_url: str | None = None,
         model: str | None = None,
+        vision_model: str | None = None,
         timeout_seconds: float | None = None,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         self.api_key = settings.deepseek_api_key if api_key is None else api_key
         self.base_url = base_url or settings.deepseek_base_url
         self.model = model or settings.deepseek_model
+        self.vision_model = vision_model or settings.deepseek_vision_model
         self.timeout_seconds = timeout_seconds or settings.deepseek_timeout_seconds
         self.transport = transport
 
-    def parse(self, jd_text: str) -> JDAnalysis:
+    def parse(
+        self,
+        jd_text: str,
+        image_data_urls: list[str] | None = None,
+    ) -> JDParseResponse:
         cleaned = jd_text.strip()
+        images = image_data_urls or []
         if not self.api_key:
             raise JDParserUnavailable("DeepSeek JD 解析尚未配置")
         payload = {
-            "model": self.model,
-            "messages": build_jd_messages(cleaned),
+            "model": self.vision_model if images else self.model,
+            "messages": build_jd_messages(cleaned, images),
             "temperature": 0,
             "response_format": {"type": "json_object"},
         }
@@ -69,7 +101,10 @@ class DeepSeekJDParser:
                 )
                 response.raise_for_status()
                 content = response.json()["choices"][0]["message"]["content"]
-            return JDAnalysis.model_validate(json.loads(content))
+            parsed = json.loads(content)
+            analysis = JDAnalysis.model_validate(parsed["analysis"])
+            source_text = parsed["source_text"] if images else cleaned
+            return JDParseResponse(analysis=analysis, source_text=source_text)
         except httpx.TimeoutException as exc:
             raise JDParserError("DeepSeek JD 解析超时，请稍后重试") from exc
         except (httpx.HTTPError, IndexError, KeyError, TypeError, ValueError, ValidationError) as exc:

@@ -260,24 +260,27 @@ Token、会话密钥或数据库密码。
 
 ### JD 解析与岗位匹配
 
-`POST /positions/parse-jd` 接受非空且不超过 50,000 个字符的 `jd_text`，仅返回可编辑的
-结构化预览，不会创建或更新岗位。确认后再通过 `POST /positions` 原子保存原始 `jd_text`
-和可选 `jd_analysis`；结构化字段包括岗位名称、摘要、职责、必备/加分技能、经验、学历、
-地点、行业关键词、薪资、团队规模、汇报对象和语言要求。带有 `jd_analysis` 的岗位可直接
-进入匹配，未解析岗位会先打开 JD 审阅抽屉。
+`POST /positions/parse-jd` 接受不超过 50,000 个字符的 `jd_text`，或至多四张 JPEG/PNG/GIF/WebP
+data URL 图片（每张解码后至多 8 MiB）；两者至少提供一项。接口返回 `{analysis, source_text}`
+可编辑预览，不会创建或更新岗位。图片解析时 `source_text` 是模型转写出的 JD；文本解析时是
+提交的原始 JD。确认后再通过 `POST /positions` 原子保存原始 `jd_text` 和可选 `jd_analysis`；
+结构化字段包括岗位名称、招聘公司、摘要、职责、必备/加分技能、经验、学历、地点、行业关键词、
+薪资、团队规模、汇报对象和语言要求。带有 `jd_analysis` 的岗位可直接进入匹配，未解析岗位会先
+打开 JD 审阅抽屉。
 
 该能力只读取后端环境变量：
 
 ```bash
 BRAINX_DEEPSEEK_API_KEY=
 BRAINX_DEEPSEEK_BASE_URL=https://api.deepseek.com
-BRAINX_DEEPSEEK_MODEL=deepseek-chat
+BRAINX_DEEPSEEK_MODEL=deepseek-v4-flash
+BRAINX_DEEPSEEK_VISION_MODEL=deepseek-v4-flash-vision-exp
 BRAINX_DEEPSEEK_TIMEOUT_SECONDS=30
 ```
 
 DeepSeek 在这里仅用于严格 JSON 的 JD 解析，不提供本项目推荐引擎使用的 embedding
-接口。Embedding 仍由独立的 `BRAINX_LLM_*` 配置提供；DeepSeek 密钥不会写入前端、
-浏览器存储、接口响应或构建产物。
+接口。Embedding 仍由独立的 `BRAINX_LLM_*` 配置提供；部署可配置服务端密钥，也可在单次
+解析请求中通过 `X-DeepSeek-Api-Key` 提供临时密钥。该临时值不会持久化、记录或写入接口响应。
 
 ### 启动（本地）
 

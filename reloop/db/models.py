@@ -153,6 +153,8 @@ class Position(Base):
     id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
     owner_user_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
     position_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 招聘公司仅用于岗位身份和推荐缓存隔离，不参与人才匹配或评分。
+    company_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     # JD 文本 (可选; 为空则只用岗位名做匹配)
     jd_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 解析后的结构化 JD；原始 jd_text 仍是推荐缓存和匹配的输入。

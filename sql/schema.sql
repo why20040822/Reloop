@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS positions (
     id            BIGINT AUTO_INCREMENT PRIMARY KEY,
     owner_user_id VARCHAR(64)  NOT NULL,
     position_name VARCHAR(128) NOT NULL COMMENT '当前招聘岗位',
+    company_name  VARCHAR(128) NULL COMMENT '招聘公司身份，仅用于岗位区分',
     jd_text       TEXT         NULL,
     jd_analysis   JSON         NULL COMMENT 'DeepSeek 解析后的结构化 JD',
     jd_analysis_version VARCHAR(32) NULL COMMENT '结构化 JD schema/version',

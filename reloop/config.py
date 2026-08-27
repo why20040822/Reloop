@@ -72,7 +72,8 @@ class Settings(BaseSettings):
     # ---------- DeepSeek JD 解析 (仅后端使用) ----------
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
-    deepseek_model: str = "deepseek-chat"
+    deepseek_model: str = "deepseek-v4-flash"
+    deepseek_vision_model: str = "deepseek-v4-flash-vision-exp"
     deepseek_timeout_seconds: float = 30
 
     # ---------- 飞书扫码登录 ----------

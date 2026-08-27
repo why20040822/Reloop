@@ -1,6 +1,6 @@
 """当前招聘岗位路由(设定后实时触发推荐引擎)。"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, owner_user_id, require_authenticated_non_guest_user
@@ -11,21 +11,24 @@ from reloop.modules.positions.jd_parser import (
     JDParserUnavailable,
 )
 from reloop.modules.profile.llm import llm_service
-from reloop.schemas.jd import JDAnalysis, JDParseRequest
+from reloop.schemas.jd import JDParseRequest, JDParseResponse
 from reloop.schemas.talent import PositionCreate, PositionOut
 
 router = APIRouter(prefix="/positions", tags=["岗位设定"])
 
 
-@router.post("/parse-jd", response_model=JDAnalysis, summary="解析 JD（不保存岗位）")
+@router.post("/parse-jd", response_model=JDParseResponse, summary="解析 JD（不保存岗位）")
 def parse_jd(
     body: JDParseRequest,
+    x_deepseek_api_key: str | None = Header(default=None, alias="X-DeepSeek-Api-Key"),
     user: User = Depends(require_authenticated_non_guest_user),
 ):
     """Preview a structured JD; persistence remains the explicit POST /positions action."""
     del user  # Enforce a strict authenticated boundary without a write side effect.
     try:
-        return DeepSeekJDParser().parse(body.jd_text)
+        request_api_key = (x_deepseek_api_key or "").strip()
+        parser = DeepSeekJDParser(api_key=request_api_key or None)
+        return parser.parse(body.jd_text, image_data_urls=body.images)
     except JDParserUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except JDParserError as exc:
@@ -39,6 +42,9 @@ def set_position(
     owner: str = Depends(owner_user_id),
 ):
     analysis_data = body.jd_analysis.model_dump(mode="json") if body.jd_analysis else None
+    if analysis_data is not None:
+        # 用户提交的公司身份优先于解析预览，避免解析结果意外改变岗位身份。
+        analysis_data["company_name"] = body.company_name
     active_count = (
         db.query(Position)
         .filter(Position.owner_user_id == owner, Position.is_active == 1)
@@ -50,6 +56,7 @@ def set_position(
             Position.owner_user_id == owner,
             Position.is_active == 1,
             Position.position_name == body.position_name,
+            Position.company_name == body.company_name,
         )
         .order_by(Position.created_at.desc())
         .first()
@@ -68,11 +75,13 @@ def set_position(
         Position.owner_user_id == owner,
         Position.is_active == 1,
         Position.position_name == body.position_name,
+        Position.company_name == body.company_name,
     ).update({Position.is_active: 0})
     emb = llm_service.embed(body.jd_text or body.position_name)
     pos = Position(
         owner_user_id=owner,
         position_name=body.position_name,
+        company_name=body.company_name,
         jd_text=body.jd_text,
         jd_analysis=analysis_data,
         jd_analysis_version="deepseek-v1" if analysis_data else None,

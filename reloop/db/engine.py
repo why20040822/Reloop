@@ -76,6 +76,7 @@ def _ensure_columns() -> None:
               current_salary/expected_salary/target_positions/education_history/contact_status
               (对齐 TTC 真实接口字段 + 备注: 收藏/联系状态/备注语句)
       - v4.2: positions.jd_analysis/jd_analysis_version(结构化 JD 解析结果)
+      - v4.3: positions.company_name(招聘公司身份)
     """
     from sqlalchemy import inspect, text
 
@@ -103,6 +104,7 @@ def _ensure_columns() -> None:
             ("contact_status", "VARCHAR(32) NULL"),
         ],
         "positions": [
+            ("company_name", "VARCHAR(128) NULL"),
             ("jd_analysis", "JSON NULL"),
             ("jd_analysis_version", "VARCHAR(32) NULL"),
         ],

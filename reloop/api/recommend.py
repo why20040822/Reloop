@@ -14,20 +14,31 @@
 
 import datetime as dt
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, owner_user_id
-from reloop.db.models import FeedbackLog, Recommendation, RecommendRun, TalentProfile
+from reloop.db.models import FeedbackLog, Position, Recommendation, RecommendRun, TalentProfile
 from reloop.modules.recommend.engine import recommend_engine
 from reloop.schemas.talent import FeedbackCreate
 
 router = APIRouter(prefix="/recommend", tags=["推荐"])
 
 
+def _require_active_owned_position(db: Session, owner: str, position_id: int) -> None:
+    position = db.query(Position).filter(
+        Position.id == position_id,
+        Position.owner_user_id == owner,
+        Position.is_active == 1,
+    ).first()
+    if position is None:
+        raise HTTPException(status_code=404, detail="岗位不存在")
+
+
 @router.post("/compute", summary="触发推荐(秒回: 缓存命中给最终结果, 否则给快速初筛+后台精算)")
 def compute(
     position_name: str | None = Query(default=None, description="岗位名, 留空取当前生效岗位"),
+    position_id: int | None = Query(default=None, description="岗位 ID，优先于岗位名"),
     sort_by: str = Query(default="match", description="排序指标: activity | match | custom"),
     w_activity: float | None = Query(default=None, description="自定义排序: 活跃度权重(0~1, 与 w_match 和为 1)"),
     w_match: float | None = Query(default=None, description="自定义排序: 匹配度权重(0~1, 与 w_activity 和为 1)"),
@@ -40,12 +51,18 @@ def compute(
     每个条目含 talent_id/name/score/score_breakdown(activity+match)/contact_reason 等。
     phase=preview 时 top_n 为快速初筛(无 LLM 匹配), 前端应轮询 /recommend/result 更新。
     """
-    return recommend_engine.compute(db, owner, position_name, sort_by=sort_by, w_activity=w_activity, w_match=w_match, force=force)
+    if position_id is not None:
+        _require_active_owned_position(db, owner, position_id)
+    return recommend_engine.compute(
+        db, owner, position_name, position_id=position_id, sort_by=sort_by,
+        w_activity=w_activity, w_match=w_match, force=force,
+    )
 
 
 @router.get("/result", summary="轮询推荐结果(后台精算完成后返回最终结果)")
 def result(
     position_name: str | None = Query(default=None, description="岗位名, 留空取当前生效岗位"),
+    position_id: int | None = Query(default=None, description="岗位 ID，优先于岗位名"),
     sort_by: str = Query(default="match", description="排序指标: activity | match | custom"),
     w_activity: float | None = Query(default=None, description="自定义排序: 活跃度权重"),
     w_match: float | None = Query(default=None, description="自定义排序: 匹配度权重"),
@@ -53,7 +70,12 @@ def result(
     owner: str = Depends(owner_user_id),
 ):
     """返回 {status: done|running|failed|idle, sort_by, ...结果字段}。status=done 时含完整结果。"""
-    return recommend_engine.result_of(db, owner, position_name, sort_by=sort_by, w_activity=w_activity, w_match=w_match)
+    if position_id is not None:
+        _require_active_owned_position(db, owner, position_id)
+    return recommend_engine.result_of(
+        db, owner, position_name, position_id=position_id, sort_by=sort_by,
+        w_activity=w_activity, w_match=w_match,
+    )
 
 
 @router.get("/latest", summary="查看最近一次运行的推荐结果")

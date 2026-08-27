@@ -86,6 +86,7 @@ class RecommendEngine:
         w_activity: Optional[float] = None,
         w_match: Optional[float] = None,
         force: bool = False,
+        position_id: Optional[int] = None,
     ) -> dict:
         """为指定用户计算推荐(数据按 owner 隔离)。
 
@@ -97,7 +98,7 @@ class RecommendEngine:
           top_n: [...] 每条含 talent_id/name/score/score_breakdown(activity+match)/contact_reason
         """
         # ---- 1. 当前岗位 ----
-        pos = self._resolve_position(db, owner_user_id, position_name)
+        pos = self._resolve_position(db, owner_user_id, position_name, position_id)
         if pos is None:
             return {"error": "no_active_position",
                     "message": "请先设定当前岗位(POST /positions)"}
@@ -204,12 +205,13 @@ class RecommendEngine:
         sort_by: str = "match",
         w_activity: Optional[float] = None,
         w_match: Optional[float] = None,
+        position_id: Optional[int] = None,
     ) -> dict:
         """查询某岗位的最新计算状态(前端轮询入口)。
 
         返回 {status: done|running|failed|idle, ...结果字段}。
         """
-        pos = self._resolve_position(db, owner_user_id, position_name)
+        pos = self._resolve_position(db, owner_user_id, position_name, position_id)
         if pos is None:
             return {"error": "no_active_position",
                     "message": "请先设定当前岗位(POST /positions)"}
@@ -392,6 +394,8 @@ class RecommendEngine:
     def _cache_key(owner: str, pos: Position, pool_version: str, sort_by: str = "match", w_activity: Optional[float] = None, w_match: Optional[float] = None) -> str:
         raw = "|".join([
             owner,
+            str(pos.id),
+            (pos.company_name or "").strip(),
             (pos.position_name or "").strip(),
             (pos.jd_text or "").strip(),
             pool_version,
@@ -486,13 +490,20 @@ class RecommendEngine:
 
     # ================= 岗位 / 粗筛 / 精算(原逻辑) =================
 
-    def _resolve_position(self, db: Session, owner_user_id: str,
-                          position_name: Optional[str]) -> Optional[Position]:
+    def _resolve_position(
+        self,
+        db: Session,
+        owner_user_id: str,
+        position_name: Optional[str],
+        position_id: Optional[int] = None,
+    ) -> Optional[Position]:
         q = db.query(Position).filter(
             Position.owner_user_id == owner_user_id,
             Position.is_active == 1,
         )
-        if position_name:
+        if position_id is not None:
+            q = q.filter(Position.id == position_id)
+        elif position_name:
             q = q.filter(Position.position_name == position_name)
         return q.order_by(Position.created_at.desc()).first()
 

@@ -3,7 +3,7 @@
 import datetime as dt
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from reloop.schemas.jd import JDAnalysis
 
@@ -54,8 +54,16 @@ class InteractionCreate(BaseModel):
 # ---------- 岗位设定 ----------
 class PositionCreate(BaseModel):
     position_name: str = Field(..., description="岗位名, 如: HRBP")
+    company_name: Optional[str] = None
     jd_text: Optional[str] = None
     jd_analysis: Optional[JDAnalysis] = None
+
+    @field_validator("company_name")
+    @classmethod
+    def normalize_company_name(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @model_validator(mode="after")
     def structured_jd_requires_raw_jd(self) -> "PositionCreate":
@@ -67,6 +75,7 @@ class PositionCreate(BaseModel):
 class PositionOut(BaseModel):
     id: int
     position_name: str
+    company_name: Optional[str] = None
     jd_text: Optional[str] = None
     jd_analysis: Optional[JDAnalysis] = None
     jd_analysis_version: Optional[str] = None

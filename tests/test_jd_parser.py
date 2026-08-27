@@ -1,6 +1,7 @@
 """Contracts for backend-only DeepSeek JD parsing and persistence."""
 
 import copy
+import base64
 import json
 
 import httpx
@@ -9,7 +10,7 @@ from fastapi.testclient import TestClient
 from pydantic import ValidationError
 from sqlalchemy import create_engine, inspect, text
 
-from reloop.config import settings
+from reloop.config import Settings, settings
 from reloop.db.engine import SessionLocal, init_db
 from reloop.db.models import Position, User
 from reloop.main import app
@@ -20,7 +21,7 @@ from reloop.modules.positions.jd_parser import (
     JDParserUnavailable,
 )
 from reloop.modules.profile.llm import llm_service
-from reloop.schemas.jd import JDAnalysis
+from reloop.schemas.jd import JDAnalysis, JDParseRequest
 
 
 VALID_ANALYSIS = {
@@ -38,6 +39,12 @@ VALID_ANALYSIS = {
     "reporting_line": "产品总监",
     "language_requirements": ["中文"],
 }
+
+VALID_PARSE_RESPONSE = {
+    "analysis": VALID_ANALYSIS,
+    "source_text": "从图片转写出的职位描述",
+}
+IMAGE_DATA_URL = "data:image/png;base64,iVBORw0KGgo="
 
 
 @pytest.fixture
@@ -123,7 +130,7 @@ def test_parse_jd_sends_backend_key_and_validates_json():
         seen_payload.update(json.loads(request.content))
         return httpx.Response(
             200,
-            json={"choices": [{"message": {"content": json.dumps(VALID_ANALYSIS)}}]},
+            json={"choices": [{"message": {"content": json.dumps(VALID_PARSE_RESPONSE)}}]},
         )
 
     parser = DeepSeekJDParser(
@@ -134,10 +141,100 @@ def test_parse_jd_sends_backend_key_and_validates_json():
 
     result = parser.parse("负责平台产品，要求 5 年经验")
 
-    assert result.title == "平台产品负责人"
-    assert result.required_skills == ["产品规划"]
+    assert result.analysis.title == "平台产品负责人"
+    assert result.analysis.required_skills == ["产品规划"]
+    assert result.source_text == "负责平台产品，要求 5 年经验"
     assert seen_headers["Authorization"] == "Bearer test-deepseek-key"
     assert seen_payload["response_format"] == {"type": "json_object"}
+
+
+def test_parser_routes_text_to_flash_and_returns_submitted_source_text():
+    seen_payload = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen_payload.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(VALID_PARSE_RESPONSE)}}]},
+            request=request,
+        )
+
+    parser = DeepSeekJDParser(
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        vision_model="deepseek-v4-flash-vision-exp",
+        transport=httpx.MockTransport(handle),
+    )
+    result = parser.parse("  文本职位描述  ")
+
+    assert seen_payload["model"] == "deepseek-v4-flash"
+    assert result.analysis.title == "平台产品负责人"
+    assert result.source_text == "文本职位描述"
+
+
+def test_parser_routes_images_to_vision_with_official_image_url_blocks():
+    seen_payload = {}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen_payload.update(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(VALID_PARSE_RESPONSE)}}]},
+            request=request,
+        )
+
+    parser = DeepSeekJDParser(
+        api_key="test-key",
+        model="deepseek-v4-flash",
+        vision_model="deepseek-v4-flash-vision-exp",
+        transport=httpx.MockTransport(handle),
+    )
+    result = parser.parse("", image_data_urls=[IMAGE_DATA_URL])
+
+    content = seen_payload["messages"][1]["content"]
+    assert seen_payload["model"] == "deepseek-v4-flash-vision-exp"
+    assert content[0]["type"] == "text"
+    assert content[1] == {"type": "image_url", "image_url": {"url": IMAGE_DATA_URL}}
+    assert result.source_text == "从图片转写出的职位描述"
+
+
+def test_parse_request_rejects_invalid_image_data_without_writes(strict_parse_headers):
+    oversized = "data:image/png;base64," + base64.b64encode(b"x" * (8 * 1024 * 1024 + 1)).decode()
+    before = database_counts()
+    with TestClient(app) as client:
+        malformed = client.post(
+            "/positions/parse-jd", headers=strict_parse_headers,
+            json={"jd_text": "有效 JD", "images": ["not-a-data-url"]},
+        )
+        unsupported = client.post(
+            "/positions/parse-jd", headers=strict_parse_headers,
+            json={"jd_text": "有效 JD", "images": ["data:image/svg+xml;base64,PHN2Zy8+"]},
+        )
+        too_large = client.post(
+            "/positions/parse-jd", headers=strict_parse_headers,
+            json={"jd_text": "有效 JD", "images": [oversized]},
+        )
+
+    assert malformed.status_code == 422
+    assert unsupported.status_code == 422
+    assert too_large.status_code == 422
+    assert database_counts() == before
+
+
+def test_parse_request_accepts_image_only_and_limits_four_images():
+    image_only = JDParseRequest.model_validate({"jd_text": "   ", "images": [IMAGE_DATA_URL]})
+
+    assert image_only.jd_text == ""
+    assert image_only.images == [IMAGE_DATA_URL]
+    with pytest.raises(ValidationError):
+        JDParseRequest.model_validate({"jd_text": "", "images": [IMAGE_DATA_URL] * 5})
+
+
+def test_deepseek_defaults_use_official_flash_models():
+    configured = Settings()
+
+    assert configured.deepseek_model == "deepseek-v4-flash"
+    assert configured.deepseek_vision_model == "deepseek-v4-flash-vision-exp"
 
 
 def test_parse_jd_rejects_missing_key_without_http_call():
@@ -195,6 +292,34 @@ def test_parse_endpoint_does_not_create_position(strict_parse_headers, monkeypat
     assert database_counts() == before
 
 
+def test_parse_endpoint_uses_transient_header_key_without_persisting_it(strict_parse_headers, monkeypatch):
+    transient_key = "transient-test-key"
+    seen_headers = {}
+    monkeypatch.setattr(settings, "deepseek_api_key", "")
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen_headers["authorization"] = request.headers["Authorization"]
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(VALID_PARSE_RESPONSE)}}]},
+            request=request,
+        )
+
+    install_upstream_transport(monkeypatch, handle)
+    before = database_counts()
+    with TestClient(app) as client:
+        response = client.post(
+            "/positions/parse-jd",
+            headers={**strict_parse_headers, "X-DeepSeek-Api-Key": transient_key},
+            json={"jd_text": "职位描述"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert seen_headers["authorization"] == f"Bearer {transient_key}"
+    assert transient_key not in response.text
+    assert database_counts() == before
+
+
 def test_parse_endpoint_rejects_blank_and_over_50000_character_jd(strict_parse_headers):
     before = database_counts()
     with TestClient(app) as client:
@@ -242,7 +367,8 @@ def test_parse_endpoint_rejects_invalid_or_guest_sessions_without_writes(strict_
 
 
 def test_parse_endpoint_sanitizes_upstream_failure_without_writes(strict_parse_headers, monkeypatch):
-    monkeypatch.setattr(settings, "deepseek_api_key", "test-deepseek-key")
+    transient_key = "test-transient-key"
+    monkeypatch.setattr(settings, "deepseek_api_key", "")
     install_upstream_transport(
         monkeypatch,
         lambda request: httpx.Response(500, text="provider failure details", request=request),
@@ -251,12 +377,14 @@ def test_parse_endpoint_sanitizes_upstream_failure_without_writes(strict_parse_h
 
     with TestClient(app) as client:
         response = client.post(
-            "/positions/parse-jd", headers=strict_parse_headers, json={"jd_text": "职位描述"}
+            "/positions/parse-jd",
+            headers={**strict_parse_headers, "X-DeepSeek-Api-Key": transient_key},
+            json={"jd_text": "职位描述"},
         )
 
     assert response.status_code == 502
     assert "provider failure details" not in response.text
-    assert "test-deepseek-key" not in response.text
+    assert transient_key not in response.text
     assert database_counts() == before
 
 
