@@ -1,4 +1,4 @@
-import type { JDAnalysis, Position } from "./api";
+import type { JDAnalysis, JDParseResponse, Position } from "./api";
 
 export type JDAnalysisDraft = { [K in keyof JDAnalysis]: string };
 
@@ -43,4 +43,8 @@ export function formatPositionLabel(position: Pick<Position, "company_name" | "p
 
 export function positionHasParsedJd(position?: Pick<Position, "jd_analysis"> | null) {
   return Boolean(position?.jd_analysis);
+}
+
+export function applyParsedJdResult(result: JDParseResponse) {
+  return { rawJd: result.source_text, analysis: result.analysis };
 }

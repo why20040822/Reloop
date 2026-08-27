@@ -6,6 +6,24 @@ const supportedTypes = new Set(["image/jpeg", "image/png", "image/gif", "image/w
 export type JdImageFile = Pick<File, "name" | "size" | "type">;
 export type JdImage = { id: string; filename: string; data_url: string };
 
+export function canParseJd(rawJd: string, images: JdImage[]) {
+  return Boolean(rawJd.trim() || images.length);
+}
+
+export function mergeJdImages(current: JdImage[], additions: JdImage[]) {
+  const existingIds = new Set(current.map((image) => image.id));
+  const uniqueAdditions = additions.filter((image) => {
+    if (existingIds.has(image.id)) return false;
+    existingIds.add(image.id);
+    return true;
+  });
+  return [...current, ...uniqueAdditions].slice(0, MAX_JD_IMAGES);
+}
+
+export function removeJdImage(current: JdImage[], imageId: string) {
+  return current.filter((image) => image.id !== imageId);
+}
+
 export function validateJdImageFiles(files: JdImageFile[], existingCount: number) {
   const accepted: JdImageFile[] = [];
   const errors: string[] = [];

@@ -7,8 +7,9 @@ import {
 import { DirectGlassSegment } from "./components/DirectGlassSegment";
 import { JDParserDrawer, type JDParserDrawerStatus } from "./components/JDParserDrawer";
 import { api, AUTH_CHANGE_EVENT, config, deepseekApiKey, type CurrentUser, type Interaction, type JDAnalysis, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
-import { formatPositionLabel, positionHasParsedJd } from "./lib/jd";
+import { applyParsedJdResult, formatPositionLabel } from "./lib/jd";
 import type { JdImage } from "./lib/jdImages";
+import { buildManualPositionPayload, buildReviewedPositionPayload, findPositionById, requiresJdParser } from "./lib/positionFlow";
 import { saveThenRefreshPosition } from "./lib/positionSave";
 import { readSidebarCollapsed, writeSidebarCollapsed } from "./lib/sidebar";
 import { scrubTtcCallbackHash } from "./lib/ttcCallback";
@@ -222,7 +223,7 @@ function Dashboard() {
     return () => { active = false; };
   }, [mode, selectedPositionId]);
 
-  const selected = positions.find((position) => position.id === selectedPositionId);
+  const selected = findPositionById(positions, selectedPositionId);
   const openParser = (position?: Position, opener?: HTMLElement | null) => {
     drawerReturnTarget.current = opener || (document.activeElement instanceof HTMLElement ? document.activeElement : null);
     drawerReturnFallback.current = matchSegmentRef.current?.querySelector<HTMLElement>("[data-segment-value='match']") || null;
@@ -238,9 +239,9 @@ function Dashboard() {
     setDrawerStatus("parsing");
     setDrawerError("");
     try {
-      const result = await api.parseJd(drawerRawJd, drawerImages.map((image) => image.data_url));
-      setDrawerRawJd(result.source_text);
-      setDrawerAnalysis(result.analysis);
+      const parsed = applyParsedJdResult(await api.parseJd(drawerRawJd, drawerImages.map((image) => image.data_url)));
+      setDrawerRawJd(parsed.rawJd);
+      setDrawerAnalysis(parsed.analysis);
       setDrawerStatus("review");
     } catch (reason) {
       setDrawerError(errorMessage(reason));
@@ -252,10 +253,7 @@ function Dashboard() {
     setDrawerError("");
     try {
       const result = await saveThenRefreshPosition(
-        () => {
-          const companyName = analysis.company_name?.trim() || null;
-          return api.setPosition({ position_name: selected?.position_name || analysis.title, company_name: companyName, jd_text: drawerRawJd, jd_analysis: { ...analysis, company_name: companyName } });
-        },
+        () => api.setPosition(buildReviewedPositionPayload(selected, analysis, drawerRawJd)),
         () => api.listPositions(),
       );
       setPositions(result.positions || [result.position, ...positions.filter((position) => position.id !== result.position.id)]);
@@ -272,8 +270,8 @@ function Dashboard() {
   const rows = useMemo(() => mode === "match" ? buildMatchRows(matches, talents) : buildActivityRows(talents), [matches, mode, talents]);
 
   return <><div className="dashboard-page">
-    <PageHeading title="今天最该联系谁" action={<DirectGlassSegment containerRef={matchSegmentRef} value={mode} options={[{ value: "activity", label: "活跃优先" }, { value: "match", label: "岗位匹配" }]} onChange={(value) => { const nextMode = value as DashboardMode; if (nextMode === "match" && !positionHasParsedJd(selected)) { openParser(selected); return; } setMode(nextMode); }} ariaLabel="选择人才展示方式" />} />
-    {mode === "match" && <div className="match-controls"><label className="position-picker">当前岗位<span className="position-select"><select value={selectedPositionId == null ? "" : String(selectedPositionId)} disabled={positions.length === 0} onChange={(event) => { const nextPosition = positions.find((position) => position.id === Number(event.target.value)); if (!nextPosition) return; setSelectedPositionId(nextPosition.id); if (!positionHasParsedJd(nextPosition)) { openParser(nextPosition, event.currentTarget); setMode("activity"); } }}>{positions.length === 0 && <option value="">暂无岗位</option>}{positions.map((position) => <option key={position.id} value={String(position.id)}>{formatPositionLabel(position)}</option>)}</select><ChevronDown size={15} aria-hidden="true" /></span></label><button className="secondary-button" type="button" onClick={(event) => openParser(selected, event.currentTarget)}>解析新 JD</button></div>}
+    <PageHeading title="今天最该联系谁" action={<DirectGlassSegment containerRef={matchSegmentRef} value={mode} options={[{ value: "activity", label: "活跃优先" }, { value: "match", label: "岗位匹配" }]} onChange={(value) => { const nextMode = value as DashboardMode; if (nextMode === "match" && requiresJdParser(selected)) { openParser(selected); return; } setMode(nextMode); }} ariaLabel="选择人才展示方式" />} />
+    {mode === "match" && <div className="match-controls"><label className="position-picker">当前岗位<span className="position-select"><select value={selectedPositionId == null ? "" : String(selectedPositionId)} disabled={positions.length === 0} onChange={(event) => { const nextPosition = findPositionById(positions, Number(event.target.value)); if (!nextPosition) return; setSelectedPositionId(nextPosition.id); if (requiresJdParser(nextPosition)) { openParser(nextPosition, event.currentTarget); setMode("activity"); } }}>{positions.length === 0 && <option value="">暂无岗位</option>}{positions.map((position) => <option key={position.id} value={String(position.id)}>{formatPositionLabel(position)}</option>)}</select><ChevronDown size={15} aria-hidden="true" /></span></label><button className="secondary-button" type="button" onClick={(event) => openParser(selected, event.currentTarget)}>解析新 JD</button></div>}
     {error && <Notice tone="error">{error}</Notice>}
     {refreshWarning && <Notice tone="info">{refreshWarning}</Notice>}
     <button className="talent-summary" type="button" onClick={() => navigate("/talents")}><span><small>{mode === "match" ? "岗位匹配候选" : "近 7 天活跃人才"}</small><strong>{rows.length}</strong></span><span>前往人才库 <ArrowUpRight size={16} /></span></button>
@@ -325,7 +323,7 @@ function Positions() {
   const load = async () => setPositions(await api.listPositions());
   useEffect(() => { void load(); }, []);
   return <div><PageHeading title="岗位管理" /><div className="positions-layout"><section className="panel"><h2>已生效岗位</h2>{positions.length ? positions.map((position) => <article className="position-card" key={position.id}><div><strong>{formatPositionLabel(position)}</strong><p>{position.jd_text || "暂未填写 JD"}</p></div><button className="icon-button danger" aria-label={`删除 ${formatPositionLabel(position)}`} onClick={async () => { if (confirm(`删除「${formatPositionLabel(position)}」？`)) { await api.deletePosition(position.id); await load(); } }}><X size={16} /></button></article>) : <Empty text="还没有在招岗位。" />}</section>
-    <form className="panel position-form" onSubmit={async (event) => { event.preventDefault(); if (!name.trim()) return; await api.setPosition({ company_name: company.trim() || null, position_name: name.trim(), jd_text: jd.trim() }); setCompany(""); setName(""); setJd(""); setMessage("岗位已保存。"); await load(); }}><h2>新增或更新岗位</h2><label>招聘公司（可选）<input value={company} onChange={(event) => setCompany(event.target.value)} placeholder="例如：北辰智能" /></label><label>岗位名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：商业分析师" required /></label><label>职位描述（JD）<textarea value={jd} onChange={(event) => setJd(event.target.value)} placeholder="填写职责、目标和关键能力" /></label><button className="primary-button"><Plus size={16} />保存岗位</button>{message && <Notice tone="success">{message}</Notice>}</form></div>
+    <form className="panel position-form" onSubmit={async (event) => { event.preventDefault(); if (!name.trim()) return; await api.setPosition(buildManualPositionPayload(company, name, jd)); setCompany(""); setName(""); setJd(""); setMessage("岗位已保存。"); await load(); }}><h2>新增或更新岗位</h2><label>招聘公司（可选）<input value={company} onChange={(event) => setCompany(event.target.value)} placeholder="例如：北辰智能" /></label><label>岗位名称<input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：商业分析师" required /></label><label>职位描述（JD）<textarea value={jd} onChange={(event) => setJd(event.target.value)} placeholder="填写职责、目标和关键能力" /></label><button className="primary-button"><Plus size={16} />保存岗位</button>{message && <Notice tone="success">{message}</Notice>}</form></div>
   </div>;
 }
 

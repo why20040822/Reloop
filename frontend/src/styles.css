@@ -107,6 +107,7 @@ a { color: inherit; text-decoration: none; }
 .talent-focus { min-height: 390px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
 .section-heading h2, .panel h2, .settings-panel h2, .profile-card h2 { margin: 0; font-size: 18px; letter-spacing: -.35px; }
+.current-match-heading { flex: 1; min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
 .focus-list { overflow: hidden; }
 .talent-table, .panel, .settings-panel, .profile-card { overflow: hidden; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); box-shadow: var(--shadow); }
 .focus-row { display: grid; width: 100%; grid-template-columns: 30px minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, .95fr) minmax(0, .85fr) minmax(0, 1.3fr) 56px 88px 18px; gap: 11px; align-items: center; min-height: 78px; padding: 10px 8px; border: 0; border-bottom: 1px solid var(--line); background: transparent; color: var(--ink); text-align: left; }
