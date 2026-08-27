@@ -438,7 +438,7 @@ def test_parse_endpoint_does_not_create_position(strict_parse_headers, monkeypat
     assert database_counts() == before
 
 
-def test_parse_endpoint_ignores_user_key_header_and_uses_only_server_key(strict_parse_headers, monkeypatch):
+def test_parse_endpoint_uses_transient_header_key_without_persisting_it(strict_parse_headers, monkeypatch):
     transient_key = "transient-test-key"
     server_key = "server-configured-key"
     seen_headers = {}
@@ -462,8 +462,35 @@ def test_parse_endpoint_ignores_user_key_header_and_uses_only_server_key(strict_
         )
 
     assert response.status_code == 200, response.text
-    assert seen_headers["authorization"] == f"Bearer {server_key}"
+    assert seen_headers["authorization"] == f"Bearer {transient_key}"
     assert transient_key not in response.text
+    assert database_counts() == before
+
+
+def test_parse_endpoint_falls_back_to_server_key_without_transient_header(strict_parse_headers, monkeypatch):
+    server_key = "server-configured-key"
+    seen_headers = {}
+    monkeypatch.setattr(settings, "deepseek_api_key", server_key)
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen_headers["authorization"] = request.headers["Authorization"]
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": json.dumps(VALID_PARSE_RESPONSE)}}]},
+            request=request,
+        )
+
+    install_upstream_transport(monkeypatch, handle)
+    before = database_counts()
+    with TestClient(app) as client:
+        response = client.post(
+            "/positions/parse-jd",
+            headers=strict_parse_headers,
+            json={"jd_text": "职位描述"},
+        )
+
+    assert response.status_code == 200, response.text
+    assert seen_headers["authorization"] == f"Bearer {server_key}"
     assert database_counts() == before
 
 

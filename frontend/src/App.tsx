@@ -2,11 +2,11 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, Navigate, Route, Routes, useLocation, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowUpRight, BriefcaseBusiness, ChevronDown, ChevronRight, CircleHelp, Database, Heart, House,
-  LogIn, Menu, Plus, Search, Settings, UsersRound, X,
+  Eye, EyeOff, LogIn, Menu, Plus, Search, Settings, UsersRound, X,
 } from "lucide-react";
 import { DirectGlassSegment } from "./components/DirectGlassSegment";
 import { JDParserDrawer, type JDParserDrawerStatus } from "./components/JDParserDrawer";
-import { api, AUTH_CHANGE_EVENT, config, type CurrentUser, type Interaction, type JDAnalysis, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
+import { api, AUTH_CHANGE_EVENT, config, deepseekApiKey, type CurrentUser, type Interaction, type JDAnalysis, type Position, type Recommendation, type SyncStatus, type Talent } from "./lib/api";
 import { applyParsedJdResult, formatPositionLabel } from "./lib/jd";
 import type { JdImage } from "./lib/jdImages";
 import { buildManualPositionPayload, buildReviewedPositionPayload, findPositionById, requiresJdParser } from "./lib/positionFlow";
@@ -331,6 +331,8 @@ function SettingsPage({ loginError, authRevision, onLogin, onConnect }: { loginE
   const [helpOpen, setHelpOpen] = useState(false);
   const [advancedMessage, setAdvancedMessage] = useState("");
   const [syncError, setSyncError] = useState("");
+  const [storedDeepseekKey, setStoredDeepseekKey] = useState(deepseekApiKey.read());
+  const [showDeepseekKey, setShowDeepseekKey] = useState(false);
   const refreshUser = async () => { if (!config.auth()) { setUser(null); return; } try { setUser(await api.me()); } catch { config.clearAuth(); setUser(null); } };
   useEffect(() => { void refreshUser(); }, [authRevision]);
   const startSync = async () => {
@@ -343,6 +345,7 @@ function SettingsPage({ loginError, authRevision, onLogin, onConnect }: { loginE
   };
   const saveAdvancedSettings = () => {
     setCfg(config.write({ mode: cfg.mode, apiBase: cfg.apiBase }));
+    deepseekApiKey.write(storedDeepseekKey);
     setAdvancedMessage("高级设置已保存。");
   };
   return <div className="settings-page">
@@ -353,7 +356,7 @@ function SettingsPage({ loginError, authRevision, onLogin, onConnect }: { loginE
     />
     {helpOpen && <section className="settings-help" aria-label="使用帮助"><strong>使用帮助</strong><p>登录飞书后，系统会按你的身份连接并同步私有人才库。</p><p>真实 API、样本数据与后端地址位于高级设置中，普通使用无需调整。</p></section>}
     <section className="settings-panel settings-account-panel"><h2>账户与人才库</h2>{loginError && <Notice tone="error">{loginError}</Notice>}{user ? <><p>已登录为 <strong>{user.display_name}</strong> · 人才池 {user.pool_count} 人</p><p>{user.ttc_connected ? `已连接：${user.ttc_bound_name || "你的 TTC 人才库"}` : "尚未连接你的 TTC 人才库"}</p><div className="button-row">{!user.ttc_connected && <button className="secondary-button" type="button" onClick={onConnect}>连接人才库</button>}<button className="primary-button" type="button" onClick={() => void startSync()}>同步人才库</button><button className="text-button" type="button" onClick={() => { config.clearAuth(); setUser(null); }}>退出登录</button></div></> : <><p>登录飞书后，系统会自动连接并同步你的私有人才库。</p><button className="primary-button" type="button" onClick={onLogin}><LogIn size={16} />登录飞书</button></>}{syncError && <Notice tone="error">{syncError}</Notice>}{sync && <Notice tone={sync.status === "failed" ? "error" : "info"}>同步状态：{sync.status}{sync.total ? ` · ${sync.current || sync.processed || 0}/${sync.total}` : ""}{sync.error ? ` · ${sync.error}` : ""}</Notice>}</section>
-    <details className="advanced-settings"><summary><span className="advanced-settings-title"><Database size={18} /><span><strong>高级设置</strong><small>数据来源与后端连接</small></span></span><ChevronRight className="advanced-settings-chevron" size={17} /></summary><div className="advanced-settings-content"><div className="setting-group"><label>数据模式</label><DirectGlassSegment value={cfg.mode} options={[{ value: "live", label: "真实 API" }, { value: "mock", label: "样本数据" }]} onChange={(mode) => { setCfg({ ...cfg, mode: mode as "live" | "mock" }); setAdvancedMessage(""); }} ariaLabel="数据模式" /></div><label>后端地址（可选）<input value={cfg.apiBase} onChange={(event) => { setCfg({ ...cfg, apiBase: event.target.value }); setAdvancedMessage(""); }} placeholder="留空 = 同源后端" /></label><button className="primary-button settings-save-button" type="button" onClick={saveAdvancedSettings}>保存高级设置</button>{advancedMessage && <Notice tone="success">{advancedMessage}</Notice>}</div></details>
+    <details className="advanced-settings"><summary><span className="advanced-settings-title"><Database size={18} /><span><strong>高级设置</strong><small>数据来源与后端连接</small></span></span><ChevronRight className="advanced-settings-chevron" size={17} /></summary><div className="advanced-settings-content"><div className="setting-group"><label>数据模式</label><DirectGlassSegment value={cfg.mode} options={[{ value: "live", label: "真实 API" }, { value: "mock", label: "样本数据" }]} onChange={(mode) => { setCfg({ ...cfg, mode: mode as "live" | "mock" }); setAdvancedMessage(""); }} ariaLabel="数据模式" /></div><label>后端地址（可选）<input value={cfg.apiBase} onChange={(event) => { setCfg({ ...cfg, apiBase: event.target.value }); setAdvancedMessage(""); }} placeholder="留空 = 同源后端" /></label><label>DeepSeek API Key <small className="browser-only-note">仅保存在此浏览器</small><span className="secret-key-input"><input type={showDeepseekKey ? "text" : "password"} value={storedDeepseekKey} onChange={(event) => { setStoredDeepseekKey(event.target.value); setAdvancedMessage(""); }} autoComplete="off" /><button className="icon-button" type="button" aria-label={showDeepseekKey ? "隐藏 DeepSeek API Key" : "显示 DeepSeek API Key"} title={showDeepseekKey ? "隐藏" : "显示"} onClick={() => setShowDeepseekKey((show) => !show)}>{showDeepseekKey ? <EyeOff size={16} /> : <Eye size={16} />}</button><button className="icon-button danger" type="button" aria-label="清除 DeepSeek API Key" title="清除" onClick={() => { deepseekApiKey.clear(); setStoredDeepseekKey(""); setShowDeepseekKey(false); setAdvancedMessage(""); }}><X size={16} /></button></span></label><button className="primary-button settings-save-button" type="button" onClick={saveAdvancedSettings}>保存高级设置</button>{advancedMessage && <Notice tone="success">{advancedMessage}</Notice>}</div></details>
   </div>;
 }
 

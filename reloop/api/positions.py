@@ -1,6 +1,6 @@
 """当前招聘岗位路由(设定后实时触发推荐引擎)。"""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
@@ -40,12 +40,14 @@ def _active_identity_query(
 @router.post("/parse-jd", response_model=JDParseResponse, summary="解析 JD（不保存岗位）")
 def parse_jd(
     body: JDParseRequest,
+    x_deepseek_api_key: str | None = Header(default=None, alias="X-DeepSeek-Api-Key"),
     user: User = Depends(require_authenticated_non_guest_user),
 ):
     """Preview a structured JD; persistence remains the explicit POST /positions action."""
     del user  # Enforce a strict authenticated boundary without a write side effect.
     try:
-        parser = DeepSeekJDParser()
+        request_api_key = (x_deepseek_api_key or "").strip()
+        parser = DeepSeekJDParser(api_key=request_api_key or None)
         return parser.parse(body.jd_text, image_data_urls=body.images)
     except JDParserUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc

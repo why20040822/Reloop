@@ -37,14 +37,18 @@ test("settled callback operations can be retried in the same SPA session", async
   assert.equal(calls, 2);
 });
 
-test("SPA callbacks exchange only opaque handles and never bind TTC browser tokens", () => {
+test("browser-local DeepSeek key wiring coexists with opaque callback handles", () => {
   const app = readFileSync(new URL("../frontend/src/App.tsx", import.meta.url), "utf8");
   const api = readFileSync(new URL("../frontend/src/lib/api.ts", import.meta.url), "utf8");
 
+  assert.match(app, /仅保存在此浏览器/);
+  assert.match(app, /deepseekApiKey/);
   assert.match(app, /get\("handle"\)/);
   assert.match(app, /runCallbackOnce\(/);
   assert.doesNotMatch(app, /get\("token"\)/);
   assert.doesNotMatch(app, /api\.bindTtc/);
+  assert.match(api, /const DEEPSEEK_API_KEY = "reloop\.deepseekApiKey"/);
+  assert.match(api, /"X-DeepSeek-Api-Key"/);
   assert.match(api, /feishuLogin:\s*\(handle: string\)/);
   assert.doesNotMatch(api, /bindTtc|json:\s*\{\s*token\s*\}/);
 });

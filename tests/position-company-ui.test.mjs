@@ -38,10 +38,9 @@ test("position labels identify a company when available and otherwise retain the
   );
 });
 
-test("JD parsing uses only server configuration and clears legacy browser key storage", async () => {
+test("browser-local DeepSeek key is isolated from config and never crosses origins", async () => {
   const storage = installBrowser();
-  storage.set("reloop.deepseekApiKey", "legacy-browser-secret");
-  const { api, config } = await import(`../frontend/src/lib/api.ts?key-test=${Date.now()}`);
+  const { api, canSendDeepseekApiKey, config, deepseekApiKey } = await import(`../frontend/src/lib/api.ts?key-test=${Date.now()}`);
   const calls = [];
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
@@ -51,7 +50,9 @@ test("JD parsing uses only server configuration and clears legacy browser key st
     return new Response(JSON.stringify([]), { headers: { "Content-Type": "application/json" } });
   };
 
-  storage.set("reloop.cfg", JSON.stringify({ mode: "live", deepseekApiKey: "legacy-browser-secret" }));
+  deepseekApiKey.write("  browser-only-secret  ");
+  assert.equal(deepseekApiKey.read(), "browser-only-secret");
+  storage.set("reloop.cfg", JSON.stringify({ mode: "live", deepseekApiKey: "browser-only-secret" }));
   assert.doesNotMatch(JSON.stringify(config.read()), /browser-only-secret|deepseek/i);
 
   await api.parseJd("原始 JD", ["data:image/png;base64,AA=="]);
@@ -59,16 +60,24 @@ test("JD parsing uses only server configuration and clears legacy browser key st
   await api.recommend(42, "match");
 
   const parse = calls.find((call) => call.url.includes("parse-jd"));
-  assert.equal(parse.init.headers["X-DeepSeek-Api-Key"], undefined);
+  assert.equal(parse.init.headers["X-DeepSeek-Api-Key"], "browser-only-secret");
   assert.deepEqual(JSON.parse(parse.init.body), { jd_text: "原始 JD", images: ["data:image/png;base64,AA=="] });
   for (const call of calls.filter((call) => !call.url.includes("parse-jd"))) assert.equal(call.init.headers["X-DeepSeek-Api-Key"], undefined);
   assert.match(calls.find((call) => call.url.includes("recommend/compute")).url, /position_id=42/);
 
+  const callsBeforeCrossOrigin = calls.length;
   config.write({ apiBase: "https://other.example" });
-  await api.parseJd("跨域 JD");
-  const crossOriginParse = calls.at(-1);
-  assert.match(crossOriginParse.url, /^https:\/\/other\.example\/positions\/parse-jd/);
-  assert.equal(crossOriginParse.init.headers["X-DeepSeek-Api-Key"], undefined);
+  assert.equal(canSendDeepseekApiKey("https://other.example/positions/parse-jd", location.origin), false);
+  await assert.rejects(api.parseJd("跨域 JD"), /仅能发送到同源工作台服务/);
+  assert.equal(calls.length, callsBeforeCrossOrigin);
+
+  deepseekApiKey.clear();
+  await api.parseJd("无密钥跨域 JD");
+  const noKeyCrossOriginParse = calls.at(-1);
+  assert.match(noKeyCrossOriginParse.url, /^https:\/\/other\.example\/positions\/parse-jd/);
+  assert.equal(noKeyCrossOriginParse.init.headers["X-DeepSeek-Api-Key"], undefined);
+
+  assert.equal(deepseekApiKey.read(), "");
   assert.equal(storage.get("reloop.deepseekApiKey"), undefined);
 });
 
@@ -135,6 +144,10 @@ test("React keeps the tested helpers wired to controls and prevents heading over
 
   assert.match(app, /value=\{String\(position\.id\)\}/);
   assert.match(app, /api\.parseJd\(drawerRawJd, drawerImages\.map\(\(image\) => image\.data_url\)\)/);
+  assert.match(app, /DeepSeek API Key <small className="browser-only-note">仅保存在此浏览器<\/small>/);
+  assert.match(app, /type=\{showDeepseekKey \? "text" : "password"\}/);
+  assert.match(app, /aria-label=\{showDeepseekKey \? "隐藏 DeepSeek API Key" : "显示 DeepSeek API Key"\}/);
+  assert.match(app, /aria-label="清除 DeepSeek API Key"/);
   assert.doesNotMatch(app, /使用偏好|保存偏好|locale|语言<select/);
   assert.match(drawer, /onPaste/);
   assert.match(drawer, /accept="image\/jpeg,image\/png,image\/gif,image\/webp"/);

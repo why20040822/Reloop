@@ -50,7 +50,7 @@ test("only structured positions can enter matching directly", () => {
   assert.equal(positionHasParsedJd({ jd_analysis: analysis }), true);
 });
 
-test("JD drawer declares its accessible controls without browser model credentials", () => {
+test("JD drawer declares its accessible controls with isolated browser credential wiring", () => {
   const drawerPath = new URL("../frontend/src/components/JDParserDrawer.tsx", import.meta.url);
   const apiPath = new URL("../frontend/src/lib/api.ts", import.meta.url);
   assert.equal(existsSync(drawerPath), true);
@@ -62,7 +62,8 @@ test("JD drawer declares its accessible controls without browser model credentia
   assert.match(drawerSource, /解析 JD/);
   assert.match(drawerSource, /确认并开始匹配/);
   assert.match(drawerSource, /解析新 JD/);
-  assert.doesNotMatch(apiSource, /DEEPSEEK_API_KEY|X-DeepSeek-Api-Key|deepseekApiKey/);
+  assert.match(apiSource, /const DEEPSEEK_API_KEY = "reloop\.deepseekApiKey"/);
+  assert.match(apiSource, /headers: requestKey \? \{ "X-DeepSeek-Api-Key": requestKey \} : undefined/);
   assert.doesNotMatch(apiSource, /const defaultConfig:[^\n]*deepseek/i);
 });
 
