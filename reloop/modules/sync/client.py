@@ -239,7 +239,9 @@ class TalentSyncService:
                         )
                         .first()
                     )
-                    if existing and _source_hash(existing.source_payload or {}) == _source_hash(t.get("source_payload") or {}):
+                    if existing and _source_hash(existing.source_payload or {}) == _source_hash(
+                        t.get("raw") or t.get("source_payload") or {}
+                    ):
                         skipped += 1
                         if progress_callback:
                             progress_callback(count + skipped, len(talents))
