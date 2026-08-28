@@ -63,8 +63,8 @@ def main() -> int:
             print("\n无重复数据, 直接建唯一索引。")
         else:
             # ---- 2. 备份 ----
-            bak = f"talent_profiles_bak_{dt.datetime.now().strftime('%Y%m%d-%H%M%S')}"
-            conn.execute(text(f"CREATE TABLE {bak} AS SELECT * FROM talent_profiles"))
+            bak = f"talent_profiles_bak_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            conn.execute(text(f"CREATE TABLE `{bak}` AS SELECT * FROM talent_profiles"))
             print(f"\n[backup] 已备份整表 -> {bak}")
 
             # ---- 3. 去重(每组保留 id 最大) + 4. 清孤儿 ----
@@ -74,23 +74,20 @@ def main() -> int:
                 ids = [int(x) for x in str(r[3]).split(",")]
                 keep = max(ids)
                 del_ids = [i for i in ids if i != keep]
+                id_list = ",".join(str(i) for i in del_ids)
                 conn.execute(text(
-                    "DELETE FROM talent_profiles WHERE id IN "
-                    f"({','.join(str(i) for i in del_ids)})"
+                    f"DELETE FROM talent_profiles WHERE id IN ({id_list})"
                 ))
                 total_deleted += len(del_ids)
-                orphan_reco += conn.execute(text(
-                    f"DELETE FROM recommendations WHERE talent_id IN "
-                    f"({','.join(str(i) for i in del_ids)})"
-                ).rowcount or 0)
-                orphan_inter += conn.execute(text(
-                    f"DELETE FROM interaction_records WHERE talent_id IN "
-                    f"({','.join(str(i) for i in del_ids)})"
-                ).rowcount or 0)
-                orphan_fb += conn.execute(text(
-                    f"DELETE FROM feedback_logs WHERE talent_id IN "
-                    f"({','.join(str(i) for i in del_ids)})"
-                ).rowcount or 0)
+                orphan_reco += (conn.execute(text(
+                    f"DELETE FROM recommendations WHERE talent_id IN ({id_list})"
+                )).rowcount or 0)
+                orphan_inter += (conn.execute(text(
+                    f"DELETE FROM interaction_records WHERE talent_id IN ({id_list})"
+                )).rowcount or 0)
+                orphan_fb += (conn.execute(text(
+                    f"DELETE FROM feedback_logs WHERE talent_id IN ({id_list})"
+                )).rowcount or 0)
             print(f"[dedup] 删除重复人才行: {total_deleted}")
             print(f"[orphan] 清理孤儿: recommendations={orphan_reco} "
                   f"interaction_records={orphan_inter} feedback_logs={orphan_fb}")
