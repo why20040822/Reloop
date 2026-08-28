@@ -289,8 +289,8 @@ def test_batch_match_maps_sequence_idx_to_real_ids(monkeypatch):
     """
     from reloop.modules.profile.llm import llm_service
     llm_service._chat_circuit_open = False
-    monkeypatch.setattr(llm_service, "_chat_online", True, raising=False)
-    monkeypatch.setattr(llm_service, "_has_key", True, raising=False)
+    llm_service._has_key = True
+    llm_service._embed_has_key = False  # 不影响本测试
 
     def fake_chat(prompt):
         return '[{"idx": 1, "score": 0.9}, {"idx": 2, "score": 0.1}]'
