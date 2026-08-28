@@ -103,6 +103,8 @@ class TalentProfile(Base):
     resume_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     # 画像文本向量 (RDS MySQL 无向量类型, JSON 存, 应用层算余弦)
     resume_embedding: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 改造②(2026-08-28): 向量来源标记 real(真模型) | hash(离线兜底)
+    embedding_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     # DEPRECATED(2026-08-24): 不再纳入核心评分, 保留列供历史数据回溯
     value_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     # DEPRECATED(2026-08-24): 不再纳入核心评分, 保留列供历史数据回溯
@@ -168,6 +170,8 @@ class Position(Base):
     jd_analysis: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     jd_analysis_version: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
     jd_embedding: Mapped[Optional[list]] = mapped_column(JSON, nullable=True)
+    # 改造②(2026-08-28): 岗位向量来源标记 real | hash
+    embedding_source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
     is_active: Mapped[bool] = mapped_column(Integer, default=1)  # 1=生效
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 

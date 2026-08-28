@@ -148,7 +148,14 @@ class LLMService:
         self.api_key = settings.llm_api_key
         self.model = settings.llm_model
         self.embed_model = settings.llm_embedding_model
+        # 改造②(2026-08-28): 向量独立端点 —— chat 与 embed 可分属不同厂商
+        # (如 chat=stepfun step_plan, embed=BigModel embedding-3)。
+        # 未配置时回落到 chat 同端点(旧行为)。
+        self.embed_base_url = (
+            settings.llm_embed_base_url or settings.llm_base_url).rstrip("/")
+        self.embed_api_key = settings.llm_embed_api_key or settings.llm_api_key
         self._has_key = bool(self.api_key)
+        self._embed_has_key = bool(self.embed_api_key)
         # 独立熔断: chat(匹配/抽取) 与 embed(向量) 互不影响
         self._chat_fail_streak = 0
         self._chat_circuit_open = False
@@ -181,7 +188,7 @@ class LLMService:
 
     @property
     def _embed_online(self) -> bool:
-        return self._has_key and not self._embed_circuit_open
+        return self._embed_has_key and not self._embed_circuit_open
 
     # ---------------- 通用对话 ----------------
     def chat(self, prompt: str, system: Optional[str] = None) -> str:
@@ -241,23 +248,27 @@ class LLMService:
         注意: 部分厂商通道(如 stepfun step_plan 推理通道)不提供 embeddings,
         此时会快速 404 -> 熔断 -> 之后直接走本地哈希向量, 不再每次网络往返。
         """
+        return self.embed_with_source(text)[0]
+
+    def embed_with_source(self, text: str) -> tuple[list[float], str]:
+        """同 embed, 另返回来源标记 'real' | 'hash'(改造②: 向量可溯源)。"""
         if not text:
-            return []
+            return [], "hash"
         if self._embed_online:
             try:
                 resp = httpx.post(
-                    f"{self.base_url}/embeddings",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    f"{self.embed_base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {self.embed_api_key}"},
                     json={"model": self.embed_model, "input": text[:8000]},
                     timeout=settings.llm_timeout,
                 )
                 resp.raise_for_status()
                 self._embed_note_success()
-                return resp.json()["data"][0]["embedding"]
+                return resp.json()["data"][0]["embedding"], "real"
             except Exception as e:  # noqa: BLE001
                 logger.warning("[llm] embed error(用本地兜底向量): %s", e)
                 self._embed_note_failure()
-        return _fallback_embed(text)
+        return _fallback_embed(text), "hash"
 
     def embed_batch(self, texts: list[str], batch_size: int = 16) -> list:
         """批量向量(R6 2026-08-28): 一次网络往返一批, 替代逐人调用。
@@ -266,17 +277,26 @@ class LLMService:
         - 单批失败 -> 仅该批降级, 不影响其他批
         - 输出顺序与输入 texts 一一对应
         """
+        return [v for v, _ in self.embed_batch_with_source(texts, batch_size)]
+
+    def embed_batch_with_source(self, texts: list[str],
+                                batch_size: int = 16) -> list[tuple]:
+        """同 embed_batch, 每项带来源标记 (vector, 'real'|'hash')(改造②)。
+
+        单批失败仅该批降级为 ('hash'), 其余批保持 'real' —— 重算脚本据此
+        只回填真实向量, 不会把哈希批误标为 real。
+        """
         if not texts:
             return []
         if not self._embed_online:
-            return [_fallback_embed(t) for t in texts]
+            return [(_fallback_embed(t), "hash") for t in texts]
         result: list = []
         for i in range(0, len(texts), batch_size):
             chunk = [(t or "")[:8000] for t in texts[i:i + batch_size]]
             try:
                 resp = httpx.post(
-                    f"{self.base_url}/embeddings",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    f"{self.embed_base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {self.embed_api_key}"},
                     json={"model": self.embed_model, "input": chunk},
                     timeout=settings.llm_timeout,
                 )
@@ -288,12 +308,12 @@ class LLMService:
                 if any(v is None for v in vecs):
                     raise ValueError("embedding 返回缺项")
                 self._embed_note_success()
-                result.extend(vecs)
+                result.extend((v, "real") for v in vecs)
             except Exception as e:  # noqa: BLE001
                 logger.warning("[llm] embed_batch 第 %d 批失败(该批降级哈希向量): %s",
                                i // batch_size + 1, e)
                 self._embed_note_failure()
-                result.extend(_fallback_embed(t) for t in chunk)
+                result.extend((_fallback_embed(t), "hash") for t in chunk)
         return result
 
     # ---------------- 业务封装 ----------------

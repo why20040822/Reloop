@@ -156,10 +156,13 @@ def _ensure_columns() -> None:
             ("target_positions", "JSON NULL"),
             ("education_history", "JSON NULL"),
             ("contact_status", "VARCHAR(32) NULL"),
+            # 改造②(2026-08-28): 向量来源标记 real | hash
+            ("embedding_source", "VARCHAR(16) NULL"),
         ],
         "positions": [
             ("jd_analysis", "JSON NULL"),
             ("jd_analysis_version", "VARCHAR(32) NULL"),
+            ("embedding_source", "VARCHAR(16) NULL"),
         ],
     }
     insp = inspect(engine)

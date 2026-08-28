@@ -69,7 +69,7 @@ def set_position(
         Position.is_active == 1,
         Position.position_name == body.position_name,
     ).update({Position.is_active: 0})
-    emb = llm_service.embed(body.jd_text or body.position_name)
+    emb, emb_src = llm_service.embed_with_source(body.jd_text or body.position_name)
     pos = Position(
         owner_user_id=owner,
         position_name=body.position_name,
@@ -77,6 +77,7 @@ def set_position(
         jd_analysis=analysis_data,
         jd_analysis_version="deepseek-v1" if analysis_data else None,
         jd_embedding=emb,
+        embedding_source=emb_src,
         is_active=1,
     )
     db.add(pos)

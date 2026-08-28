@@ -278,18 +278,21 @@ class TalentSyncService:
             embeddings: list = []
             if actions:
                 from reloop.modules.profile.llm import llm_service
-                embeddings = llm_service.embed_batch(
+                # 改造②: 每条向量带来源标记(real|hash), 单批失败仅该批标 hash
+                embeddings = llm_service.embed_batch_with_source(
                     [(a[1].get("summary") or "") for a in actions]
                 )
 
             # ---- 第二遍: 写入(upsert) ----
             for i, (kind, t, existing) in enumerate(actions):
-                emb = embeddings[i] if i < len(embeddings) else None
+                emb, emb_src = (embeddings[i] if i < len(embeddings)
+                                else (None, None))
                 structuring_service.enrich_and_save(
                     db, owner_user_id, t,
                     source_id=(t.get("source_id") or None),
                     commit=False,
                     resume_embedding=emb,
+                    embedding_source=emb_src,
                 )
                 count += 1
                 if progress_callback:

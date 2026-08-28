@@ -89,7 +89,13 @@ def position_owner(owner, monkeypatch):
         calls.append(text)
         return [0.0]
 
+    # 改造②(2026-08-28): positions 现经 embed_with_source 取向量+来源标记
+    def fake_embed_with_source(text):
+        calls.append(text)
+        return [0.0], "hash"
+
     monkeypatch.setattr(llm_service, "embed", fake_embed)
+    monkeypatch.setattr(llm_service, "embed_with_source", fake_embed_with_source)
     return owner, calls
 
 

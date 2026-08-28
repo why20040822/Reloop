@@ -68,6 +68,11 @@ class Settings(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = "qwen-plus"
     llm_embedding_model: str = "text-embedding-v3"
+    # 改造②(2026-08-28): 向量独立端点 —— chat 与 embed 可分属不同厂商
+    # (如 chat=stepfun step_plan, embed=BigModel embedding-3)。
+    # 留空则回落到 llm_base_url/llm_api_key(旧行为)。
+    llm_embed_base_url: str = ""
+    llm_embed_api_key: str = ""
     llm_timeout: int = 30
 
     # ---------- DeepSeek JD 解析 (仅后端使用) ----------

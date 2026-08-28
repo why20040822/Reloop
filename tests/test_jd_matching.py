@@ -210,3 +210,72 @@ def _fixture_pool():
     talents = db.query(TalentProfile).filter(TalentProfile.owner_user_id == owner).all()
     pos = db.query(Position).filter(Position.owner_user_id == owner).first()
     return db, owner, pos, talents
+
+
+# ---------- 改造②: 向量来源标记 + 独立 embed 端点 ----------
+
+def test_embed_with_source_offline_marks_hash():
+    """LLM key 为空(离线) -> embed_with_source 返回 ('hash') 且向量非空。"""
+    from reloop.modules.profile.llm import llm_service
+    vec, src = llm_service.embed_with_source("某候选人画像文本")
+    assert src == "hash"
+    assert len(vec) == 256, "离线兜底应为 256 维哈希向量"
+
+
+def test_embed_batch_with_source_offline_marks_hash():
+    from reloop.modules.profile.llm import llm_service
+    out = llm_service.embed_batch_with_source(["a", "b"])
+    assert len(out) == 2
+    assert all(src == "hash" for _, src in out)
+
+
+def test_embed_endpoint_fallback_to_chat_config():
+    """未配置 embed 独立端点时回落 chat 配置(旧行为)。"""
+    from reloop.modules.profile.llm import LLMService
+    s = LLMService()
+    assert s.embed_base_url == s.base_url
+    assert s.embed_api_key == s.api_key
+
+
+def test_embed_endpoint_override():
+    """配置独立 embed 端点后, embed 走新端点且与 chat 端点解耦。"""
+    from reloop.modules.profile.llm import LLMService
+    from reloop.config import settings
+    old = (settings.llm_embed_base_url, settings.llm_embed_api_key)
+    try:
+        settings.llm_embed_base_url = "https://open.bigmodel.cn/api/paas/v4"
+        settings.llm_embed_api_key = "fake-bigmodel-key"
+        s = LLMService()
+        assert s.embed_base_url == "https://open.bigmodel.cn/api/paas/v4"
+        assert s.embed_api_key == "fake-bigmodel-key"
+        assert s.base_url != s.embed_base_url, "chat 端点不受影响"
+    finally:
+        settings.llm_embed_base_url, settings.llm_embed_api_key = old
+
+
+def test_structuring_writes_embedding_source():
+    """同步落库路径应写入 embedding_source(离线=hash)。"""
+    from reloop.db.engine import SessionLocal, Base, engine as _engine
+    from reloop.db.models import TalentProfile
+    Base.metadata.create_all(_engine)
+    db = SessionLocal()
+    owner = "emb_src_test"
+    from reloop.db.models import User
+    if db.query(User).filter(User.user_id == owner).first() is None:
+        db.add(User(user_id=owner)); db.commit()
+    for r in db.query(TalentProfile).filter(TalentProfile.owner_user_id == owner).all():
+        db.delete(r)
+    db.commit()
+    row = rs_structuring(db, owner)
+    try:
+        assert row.resume_embedding and len(row.resume_embedding) == 256
+        assert row.embedding_source == "hash"
+    finally:
+        db.close()
+
+
+def rs_structuring(db, owner):
+    from reloop.modules.profile.structuring import structuring_service
+    return structuring_service.enrich_and_save(
+        db, owner, {"name": "测试", "summary": "五年后端经验, 精通 Python"},
+        source_id="emb-src-1", commit=True)
