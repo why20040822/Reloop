@@ -38,7 +38,20 @@ test("unavailable storage does not break the sidebar control", () => {
   assert.doesNotThrow(() => writeSidebarCollapsed(true, storage));
 });
 
-const appSource = readFileSync(new URL("../frontend/src/App.tsx", import.meta.url), "utf8");
+// R2(2026-08-28) App.tsx 拆分后, 壳/页面逻辑分布在多个文件; 断言目标不变, 输入改为组合源。
+const APP_SOURCES = [
+  "App.tsx",
+  "components/Workbench.tsx",
+  "pages/AuthFlows.tsx",
+  "pages/Dashboard.tsx",
+  "pages/TalentList.tsx",
+  "pages/TalentDetail.tsx",
+  "pages/Positions.tsx",
+  "pages/Settings.tsx",
+];
+const appSource = APP_SOURCES.map(
+  (p) => readFileSync(new URL(`../frontend/src/${p}`, import.meta.url), "utf8"),
+).join("\n");
 const stylesSource = readFileSync(new URL("../frontend/src/styles.css", import.meta.url), "utf8");
 
 test("sidebar brand mark is the accessible desktop collapse control", () => {
