@@ -5,7 +5,7 @@
 - 环境变量 `BRAINX_` 前缀；配置 `reloop/config.py`(pydantic-settings)，启动 `validate_security()` 自检（缺密钥/缺 DB 凭据直接报错）。
 - 外部接口仅三类：TTC 人才库 / LLM(OpenAI 兼容) / RDS。隔离键 `owner_user_id`，生产强制 `X-Auth-Token`(HMAC 会话)，`X-Owner-User-Id` 仅开发 fallback。
 - 目录：`reloop/modules/{sync,profile,scoring,recommend,positions,auth}` + api/db/schemas/utils。
-- **不推 GitHub**（用户明确）：本地 commit 照常，推送用户手动。
+- **GitHub 推送已恢复**（用户 2026-08-28 指令统一三方）：origin/main=本地=服务器；推送前须密钥扫描（历史教训：曾泄漏 RDS 凭据）。
 - LLM：指定智谱 BigModel(open.bigmodel.cn/api/paas/v4, glm-4-flash + embedding-3)；本地 .env 的 stepfun 配置实际不可用(chat 404/embedding 400)，全靠熔断+降级跑。LLM 熔断：连续 3 次失败进程内自动离线(`modules/profile/llm.py`)，gunicorn 多 worker 各自独立熔断。无向量库：embedding 存 JSON、应用层算余弦。
 - 两阶段推荐：`recommend_runs` 持久缓存(sha256 owner|岗位|JD|池版本)；未命中先本地初筛，LLM 后台精算，前端轮询 `/recommend/result`。`DEFAULT_TOP_SIZES=(3,10,None)`。
 - TTC 同步用服务端全局 Token(`BRAINX_TTC_TALENT_*`)；users.ttc_* 列 DEPRECATED。TTC 真实字段路径：`work.items[]` / `project.items[]` / `skill.ai_ability` / `dynamic.macro.concern_reason`。models 新增 8 列经 `engine._ensure_columns()` 自动 ALTER(MySQL+SQLite 兼容)。
