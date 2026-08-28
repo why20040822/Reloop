@@ -208,7 +208,23 @@ class LLMService:
             resp.raise_for_status()
             data = resp.json()
             self._chat_note_success()
-            return (data["choices"][0]["message"]["content"] or "").strip()
+            msg = data["choices"][0]["message"]
+            content = (msg.get("content") or "").strip()
+            if not content:
+                # 推理模型(step-3.7-flash/router)偶发 content=None 而思考写在
+                # reasoning_content: 兜底提取, 让上层 JSON 解析仍有机会命中
+                reasoning = (msg.get("reasoning_content")
+                             or msg.get("reasoning") or "").strip()
+                if reasoning:
+                    logger.warning(
+                        "[llm] chat content 为空(模型=%s), 从 reasoning_content 兜底提取(len=%d)",
+                        self.model, len(reasoning))
+                    content = reasoning
+                else:
+                    logger.warning(
+                        "[llm] chat 返回空 content(模型=%s, finish=%s)",
+                        self.model, data["choices"][0].get("finish_reason"))
+            return content
         except Exception as e:  # noqa: BLE001
             logger.warning("[llm] chat error: %s", e)
             self._chat_note_failure()
@@ -381,7 +397,7 @@ class LLMService:
         return result
 
     def batch_match_scores(self, position_name: str, jd_text: str,
-                           candidates: list[dict], batch_size: int = 20,
+                           candidates: list[dict], batch_size: int = 10,
                            jd_skills: Optional[list[str]] = None) -> dict[int, float]:
         """批量 JD vs 简历匹配度评分(主通道)。
 
@@ -389,6 +405,8 @@ class LLMService:
                       "skills": [...], "work_years": N, "education": "..."}, ...]
         jd_skills: AI 解析出的结构化技能清单(改造①); 提供时 prompt 以
           结构化要求替代原文片段 —— 省 token、与结构化链路对齐、分数更稳。
+        batch_size 默认 10(改造②): router/flash 推理模型批越大越易空返回,
+          10 人/批显著降低空 content 率。
         返回 {idx: score}。LLM 不可用时返回空 dict(调用方降级到结构化)。
         """
         if not self._chat_online or not candidates:
@@ -425,8 +443,10 @@ class LLMService:
                 skills_block=skills_block,
             )
             data = self.chat_json_list(prompt)
-            if not isinstance(data, list):
-                logger.warning("[llm] batch_match invalid, len=%d", len(batch))
+            if not isinstance(data, list) or not data:
+                logger.warning("[llm] batch_match invalid/empty, len=%d, batch=%d",
+                               len(data) if isinstance(data, list) else -1,
+                               len(batch))
                 continue
             for item in data:
                 try:
