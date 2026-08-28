@@ -115,3 +115,13 @@ class FeedbackCreate(BaseModel):
     action: str = Field(..., description="confirm/reject/correct/fav/unfav")
     corrected_tag: Optional[str] = None
     note: Optional[str] = None
+
+
+class CompanySupplementOut(BaseModel):
+    """公司人才库补充信息(实时拉取公司共享池, 只读)。"""
+    found: bool
+    fetched_at: Optional[str] = None
+    pool_total: int = 0
+    supplement: Optional[dict] = None
+    diff: list[dict] = []
+    message: Optional[str] = None

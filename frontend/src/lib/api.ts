@@ -30,6 +30,15 @@ export type JDAnalysis = {
 };
 export type Position = { id: number; position_name: string; jd_text?: string | null; jd_analysis?: JDAnalysis | null; jd_analysis_version?: string | null; is_active: boolean };
 export type Interaction = { interaction_type: string; summary?: string | null; occurred_at: string };
+export type CompanyDiff = { field: string; local?: string | null; company?: string | null };
+export type CompanySupplement = {
+  found: boolean;
+  fetched_at?: string | null;
+  pool_total?: number;
+  supplement?: Record<string, unknown> | null;
+  diff?: CompanyDiff[];
+  message?: string | null;
+};
 export type Recommendation = {
   rank: number;
   talent_id: number;
@@ -168,6 +177,10 @@ export const api = {
   async getTalent(id: number) {
     if (isMock()) return mockTalents.find((talent) => talent.id === id) || null;
     return request<Talent>(`/talents/${id}`);
+  },
+  async getCompanySupplement(id: number, force = false) {
+    if (isMock()) return { found: false, pool_total: 0, diff: [] as CompanyDiff[], supplement: null, fetched_at: null, message: "演示模式无公司库数据" };
+    return request<CompanySupplement>(`/talents/${id}/company-supplement${force ? "?force=true" : ""}`);
   },
   async getInteractions(id: number) {
     if (isMock()) return mockInteractions.get(id) || [];

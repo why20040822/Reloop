@@ -13,7 +13,9 @@ from reloop.db.models import (
     Recommendation,
     TalentProfile,
 )
-from reloop.schemas.talent import InteractionCreate, TalentOut
+from reloop.modules.sync.client import TTCFetchError, TTCAuthRequired
+from reloop.modules.sync.company_pool import get_company_supplement as _get_company_supplement
+from reloop.schemas.talent import CompanySupplementOut, InteractionCreate, TalentOut
 from reloop.utils.isolation import assert_owner
 
 router = APIRouter(prefix="/talents", tags=["人才库"])
@@ -108,6 +110,37 @@ def get_talent(
         raise HTTPException(404, "人才不存在")
     assert_owner(TalentProfile, t, owner)
     return t
+
+
+@router.get(
+    "/{talent_id}/company-supplement",
+    response_model=CompanySupplementOut,
+    summary="公司人才库补充信息(实时拉共享池, 只读)",
+)
+def get_company_supplement(
+    talent_id: int,
+    force: bool = False,
+    db: Session = Depends(get_db),
+    owner: str = Depends(owner_user_id),
+):
+    """看 Reloop 人才信息时, 实时拉公司人才库上同人的最新信息(备注/状态等)作为补充。
+
+    - 公司共享池快照带 30 分钟 TTL 缓存; force=true 强制刷新
+    - found=false 时 message 说明原因(无映射/池中未找到/凭据问题)
+    """
+    t = db.get(TalentProfile, talent_id)
+    if not t:
+        raise HTTPException(404, "人才不存在")
+    assert_owner(TalentProfile, t, owner)
+    try:
+        return _get_company_supplement(t, force=force)
+    except TTCAuthRequired:
+        return CompanySupplementOut(
+            found=False,
+            message="公司共享库凭据缺失或已失效，请检查 BRAINX_TTC_SHARED_AUTH_TOKEN 配置",
+        )
+    except TTCFetchError as exc:
+        return CompanySupplementOut(found=False, message=f"公司人才库拉取失败：{exc}")
 
 
 @router.get("/{talent_id}/interactions", summary="查看人才互动记录")

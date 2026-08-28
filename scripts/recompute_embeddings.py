@@ -46,12 +46,13 @@ def main():
 
     # ---- 现状统计 ----
     stats = db.execute(text(
-        "SELECT 'talent_profiles' src, COALESCE(embedding_source,'(null)') s, "
-        "COUNT(*) n, MIN(JSON_LENGTH(resume_embedding)) dim "
-        "FROM talent_profiles GROUP BY s "
+        "SELECT 'talent_profiles' AS src, COALESCE(embedding_source,'(null)') AS s, "
+        "COUNT(*) AS n, MIN(JSON_LENGTH(resume_embedding)) AS dim "
+        "FROM talent_profiles GROUP BY COALESCE(embedding_source,'(null)') "
         "UNION ALL "
         "SELECT 'positions', COALESCE(embedding_source,'(null)'), COUNT(*), "
-        "MIN(JSON_LENGTH(jd_embedding)) FROM positions GROUP BY s")).fetchall()
+        "MIN(JSON_LENGTH(jd_embedding)) FROM positions "
+        "GROUP BY COALESCE(embedding_source,'(null)')")).fetchall()
     print("== 重算前现状 ==")
     for src, s, n, dim in stats:
         print(f"  {src:<16} source={s:<6} rows={n:<6} min_dim={dim}")
@@ -79,10 +80,11 @@ def main():
 
     # ---- 终态 ----
     stats = db.execute(text(
-        "SELECT 'talent_profiles' src, COALESCE(embedding_source,'(null)') s, COUNT(*) n "
-        "FROM talent_profiles GROUP BY s UNION ALL "
+        "SELECT 'talent_profiles' AS src, COALESCE(embedding_source,'(null)') AS s, "
+        "COUNT(*) AS n FROM talent_profiles "
+        "GROUP BY COALESCE(embedding_source,'(null)') UNION ALL "
         "SELECT 'positions', COALESCE(embedding_source,'(null)'), COUNT(*) "
-        "FROM positions GROUP BY s")).fetchall()
+        "FROM positions GROUP BY COALESCE(embedding_source,'(null)')")).fetchall()
     print("== 重算后终态 ==")
     for src, s, n in stats:
         print(f"  {src:<16} source={s:<6} rows={n}")
