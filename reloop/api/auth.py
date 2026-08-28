@@ -43,11 +43,14 @@ def _redirect_to_spa(request: Request, route: str) -> RedirectResponse:
     return RedirectResponse(f"{target}?{query}" if query else target, status_code=302)
 
 
-@router.get("/feishu/url", summary="获取飞书扫码授权页 URL")
+@router.get("/feishu/url", summary="获取飞书扫码授权页 URL(含一次性随机 state)")
 def feishu_login_url():
     if not feishu_auth.enabled:
         raise HTTPException(status_code=400, detail="飞书登录未配置(BRAINX_FEISHU_APP_ID/SECRET)")
-    return {"url": feishu_auth.login_url(_callback_url("feishu"))}
+    # R4(2026-08-28): state 一次性化——每次请求生成随机 state, 前端保存并在回调时比对
+    import secrets
+    state = secrets.token_urlsafe(16)
+    return {"url": feishu_auth.login_url(_callback_url("feishu"), state=state), "state": state}
 
 
 @router.get("/feishu/qrcode", summary="登录二维码(SVG 图片, 内容为飞书授权页 URL)")
@@ -84,7 +87,17 @@ def feishu_login(body: FeishuLoginBody, db: Session = Depends(get_db)):
     else:
         user.display_name = info.get("name") or user.display_name
     db.commit()
-    return {"token": create_session_token(user_id), "user": {"user_id": user_id, "display_name": user.display_name}}
+    db.refresh(user)
+    # R4: 会话 token 绑定当前 session_version, 吊销机制生效
+    return {"token": create_session_token(user_id, session_version=user.session_version or 0), "user": {"user_id": user_id, "display_name": user.display_name}}
+
+
+@router.post("/logout", summary="登出(吊销当前用户全部会话 token)")
+def logout(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """R4(2026-08-28): session_version 自增 -> 该用户所有旧 token 立即失效。"""
+    user.session_version = int(user.session_version or 0) + 1
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/ttc/login-url", summary="获取 TTC 官方飞书登录地址")

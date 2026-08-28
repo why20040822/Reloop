@@ -329,3 +329,35 @@ npm run build:web
 ---
 
 > 敏感信息（数据库/飞书/服务器账号密码）见《Hayden.md》，不写入本仓库。
+
+---
+
+## 六、API 速查（2026-08-28 对齐）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| GET | `/health` | 健康检查 | 无 |
+| GET | `/auth/feishu/url` | 飞书授权 URL（含一次性随机 state） | 无 |
+| GET | `/auth/feishu/qrcode` | 登录二维码 SVG | 无 |
+| GET | `/auth/feishu/callback` | OAuth 回调（302 转 SPA 路由） | 无 |
+| POST | `/auth/feishu/login` | 授权码换登录态 `{code}` | 无 |
+| POST | `/auth/logout` | 登出（吊销该用户全部会话 token） | 登录态 |
+| GET | `/auth/me` | 当前用户信息 + 人才池规模 | 登录态/访客 |
+| GET | `/auth/ttc/login-url` | TTC 官方授权页地址 | 无 |
+| GET | `/auth/ttc/callback` | TTC 回调（302 转 SPA） | 无 |
+| POST | `/auth/ttc/bind` | 校验并绑定 TTC 登录态 `{token}` | 登录态 |
+| POST | `/auth/ttc/auto-login` | 一键扫码绑定（无头浏览器会话） | 登录态 |
+| GET | `/auth/ttc/auto-login/{sid}/status` | 轮询扫码状态/二维码 | 登录态 |
+| POST | `/sync/ttc` | 触发 TTC 同步（限流：默认 600s/owner） | 登录态/访客 |
+| GET | `/sync/ttc/status?sync_id=` | 同步进度（sync_runs 表，跨进程可查） | 隔离键 |
+| POST | `/sync/ttc/ingest` | 导入页面导出 JSON `{talents}` | 隔离键 |
+| GET | `/talents?keyword=&limit=&slim=` | 人才列表（slim 瘦身列表） | 隔离键 |
+| GET | `/talents/followed/list` | 已关注列表 | 隔离键 |
+| GET | `/talents/{id}` / DELETE `/talents/{id}` | 详情 / 删除（级联清理） | 隔离键+属主校验 |
+| POST | `/talents/{id}/follow` | 关注/取关 | 隔离键 |
+| GET/POST | `/talents/{id}/interactions` `/talents/{id}/interaction` | 互动记录查看/新增 | 隔离键 |
+| POST | `/positions/parse-jd` | JD 结构化解析（stepfun，不落库） | 登录态（拒绝访客） |
+| GET/POST/DELETE | `/positions` | 岗位列表 / 设定（同名同 JD 幂等）/ 删除 | 隔离键 |
+| POST | `/recommend/compute` | 触发推荐（缓存命中秒回，否则初筛+后台精算） | 隔离键 |
+| GET | `/recommend/result` | 轮询推荐结果 | 隔离键 |
+| POST | `/recommend/feedback` | 反馈 confirm/reject/correct/fav/unfav | 隔离键 |

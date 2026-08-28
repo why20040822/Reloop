@@ -10,8 +10,17 @@ export function AuthCallback() {
   const navigate = useNavigate();
   const [message, setMessage] = useState("正在完成飞书登录…");
   useEffect(() => {
-    const code = new URLSearchParams(location.search).get("code");
+    const params = new URLSearchParams(location.search);
+    const code = params.get("code");
     if (!code) { setMessage("缺少飞书授权码，请返回设置页重新登录。"); return; }
+    // R4(2026-08-28) OAuth state 校验: 回调 state 必须与跳转前保存的一致(CSRF 防护)
+    const savedState = sessionStorage.getItem("reloop.oauth.state");
+    sessionStorage.removeItem("reloop.oauth.state");
+    const returnedState = params.get("state");
+    if (savedState && returnedState !== savedState) {
+      setMessage("登录状态校验失败（state 不匹配），请返回设置页重新登录。");
+      return;
+    }
     void api.feishuLogin(code)
       .then((auth) => { config.setAuth(auth); navigate("/ttc/connect", { replace: true }); })
       .catch((error: unknown) => setMessage(errorMessage(error)));

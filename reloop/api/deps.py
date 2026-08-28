@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from reloop.config import settings
 from reloop.db.engine import get_db
 from reloop.db.models import User
-from reloop.modules.auth.feishu import verify_session_token
+from reloop.modules.auth.feishu import verify_session_token_payload
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,16 @@ def get_current_user(
     """
     # 1. 登录态优先
     if x_auth_token:
-        user_id = verify_session_token(x_auth_token)
-        if user_id:
-            user = db.query(User).filter(User.user_id == user_id).first()
+        payload = verify_session_token_payload(x_auth_token)
+        if payload:
+            user = db.query(User).filter(User.user_id == payload["user_id"]).first()
             if user is not None:
+                # R4(2026-08-28) token 吊销: 会话版本不匹配 -> 已被登出/吊销
+                if int(payload.get("sv", 0)) != int(user.session_version or 0):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="登录态已失效, 请重新扫码登录",
+                    )
                 return user
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -94,9 +100,11 @@ def get_optional_user(
 ) -> Optional[User]:
     """可选用户: 有登录态返回用户实体, 否则 None(不抛异常)。"""
     if x_auth_token:
-        user_id = verify_session_token(x_auth_token)
-        if user_id:
-            return db.query(User).filter(User.user_id == user_id).first()
+        payload = verify_session_token_payload(x_auth_token)
+        if payload:
+            user = db.query(User).filter(User.user_id == payload["user_id"]).first()
+            if user is not None and int(payload.get("sv", 0)) == int(user.session_version or 0):
+                return user
     if x_owner_user_id:
         return db.query(User).filter(User.user_id == x_owner_user_id).first()
     return None
@@ -121,14 +129,19 @@ def require_authenticated_non_guest_user(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="需要有效登录态",
         )
-    user_id = verify_session_token(x_auth_token)
+    payload = verify_session_token_payload(x_auth_token)
+    user_id = payload["user_id"] if payload else None
     if not user_id or user_id == settings.guest_owner_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="登录态无效或已过期, 请重新扫码登录",
         )
     user = db.query(User).filter(User.user_id == user_id).first()
-    if user is None or user.user_id == settings.guest_owner_id:
+    if (
+        user is None
+        or user.user_id == settings.guest_owner_id
+        or int(payload.get("sv", 0)) != int(user.session_version or 0)
+    ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="登录态无效或已过期, 请重新扫码登录",

@@ -42,7 +42,12 @@ export default function Workbench() {
 
   const startFeishuLogin = async () => {
     setLoginError("");
-    try { window.location.assign((await api.feishuLoginUrl()).url); }
+    try {
+      // R4(2026-08-28): 保存一次性 state, 回调时比对(CSRF 防护)
+      const { url, state } = await api.feishuLoginUrl();
+      if (state) sessionStorage.setItem("reloop.oauth.state", state);
+      window.location.assign(url);
+    }
     catch (error) { setLoginError(errorMessage(error)); navigate("/settings"); }
   };
   const startTtcLogin = () => navigate("/ttc/connect");

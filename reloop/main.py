@@ -44,6 +44,8 @@ app = FastAPI(
 # 允许配套前端跨域调用 (前端预览域名与本服务不同源)。
 # 来源用 BRAINX_CORS_ALLOW_ORIGINS 配置; 默认 "*" 放通全部(开发期)。
 _cors_origins = settings.cors_origins_list
+if settings.app_env == "prod" and _cors_origins == ["*"]:
+    logger.warning("[startup] 生产环境 CORS 仍为 '*', 请设置 BRAINX_CORS_ALLOW_ORIGINS 收紧(如 https://reloop.yorkteam.cn)")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,

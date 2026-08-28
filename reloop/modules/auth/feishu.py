@@ -32,11 +32,17 @@ _FEISHU_OPEN_BASE = "https://open.feishu.cn"
 _AUTHORIZE_PATH = "/open-apis/authen/v1/index"
 
 
-def create_session_token(user_id: str, ttl_hours: Optional[int] = None) -> str:
-    """签发会话 token: base64url(payload).hex_hmac。无状态、无需存储。"""
+def create_session_token(user_id: str, ttl_hours: Optional[int] = None,
+                         session_version: int = 0) -> str:
+    """签发会话 token: base64url(payload).hex_hmac。无状态、无需存储。
+
+    R4(2026-08-28): payload 带 sv(会话版本); 登出/吊销时 users.session_version
+    自增, 旧 token 立即失效。
+    """
     ttl = ttl_hours or settings.auth_session_ttl_hours
     payload = json.dumps(
-        {"user_id": user_id, "exp": int(time.time()) + ttl * 3600},
+        {"user_id": user_id, "exp": int(time.time()) + ttl * 3600,
+         "sv": int(session_version or 0)},
         ensure_ascii=False, separators=(",", ":"),
     )
     b = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
@@ -45,8 +51,8 @@ def create_session_token(user_id: str, ttl_hours: Optional[int] = None) -> str:
     return f"{b}.{sig}"
 
 
-def verify_session_token(token: str) -> Optional[str]:
-    """校验会话 token, 通过返回 user_id, 否则 None。"""
+def verify_session_token_payload(token: str) -> Optional[dict]:
+    """校验会话 token, 通过返回完整 payload(含 sv), 否则 None。"""
     try:
         b, sig = token.split(".", 1)
     except ValueError:
@@ -65,7 +71,15 @@ def verify_session_token(token: str) -> Optional[str]:
     if int(payload.get("exp", 0)) < time.time():
         return None
     user_id = payload.get("user_id")
-    return user_id if isinstance(user_id, str) and user_id else None
+    if not isinstance(user_id, str) or not user_id:
+        return None
+    return payload
+
+
+def verify_session_token(token: str) -> Optional[str]:
+    """校验会话 token, 通过返回 user_id, 否则 None(兼容旧调用方)。"""
+    payload = verify_session_token_payload(token)
+    return payload["user_id"] if payload else None
 
 
 def decode_ttc_jwt_unverified(token: str) -> dict:
