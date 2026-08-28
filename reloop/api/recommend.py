@@ -122,11 +122,19 @@ def feedback(
     )
     db.add(log)
     if body.action in ("confirm", "reject"):
-        db.query(Recommendation).filter(
-            Recommendation.owner_user_id == owner,
-            Recommendation.talent_id == body.talent_id,
-            Recommendation.recommend_date == dt.date.today(),
-        ).update({Recommendation.status: "confirmed" if body.action == "confirm" else "rejected"})
+        # BUG-103(2026-08-28): 定位"该人才最近一次推荐"(不限当天)——
+        # 旧逻辑只匹配 recommend_date==today, 昨日缓存条目的反馈被静默丢弃。
+        latest = (
+            db.query(Recommendation)
+            .filter(
+                Recommendation.owner_user_id == owner,
+                Recommendation.talent_id == body.talent_id,
+            )
+            .order_by(Recommendation.id.desc())
+            .first()
+        )
+        if latest:
+            latest.status = "confirmed" if body.action == "confirm" else "rejected"
     if body.action == "correct" and body.corrected_tag:
         t = db.get(TalentProfile, body.talent_id)
         if t and t.owner_user_id == owner:

@@ -124,8 +124,15 @@ class Settings(BaseSettings):
     score_noise_threshold: float = 0.1
     recommend_top_n: int = 10
     activity_decay: float = 0.1
-    # 活跃度 v2: 绝对分(最近事件新近度)在混合归一化中的占比, 其余给批内相对分
-    activity_absolute_weight: float = 0.4
+    # 活跃度 v3(2026-08-28): 纯绝对衰减。批内 min-max 相对归一化已废除——
+    # 它保证池内必有人得高分, 是"全员活跃"假分布的算法级放大器。
+    activity_absolute_weight: float = 1.0
+    # 绝对活跃窗口(天): 距最近事件超过该天数活跃分触底(原 180 过宽, 收紧到 90)
+    activity_abs_window: int = 90
+    # 活跃门禁: 距最近事件超过该天数视为"不活跃"(软门禁: 综合分乘 penalty 降权;
+    # 观察期后可收紧为直接排除)
+    activity_inactive_days: int = 90
+    activity_gate_penalty: float = 0.1
 
     # ---------- 派生 ----------
     @property

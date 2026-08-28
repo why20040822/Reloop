@@ -27,6 +27,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -141,6 +142,12 @@ class TalentProfile(Base):
     __table_args__ = (
         Index("ix_talent_owner", "owner_user_id", "id"),
         Index("ix_talent_source", "owner_user_id", "source_id"),
+        # F2(2026-08-28): 同 owner 同 source_id 唯一——数据库层兜底, 从根上
+        # 堵死重复导入(此前只有普通索引, 并发同步可双插)。旧库需先跑
+        # scripts/dedup_talents.py 清历史重复, 再由 _ensure_indexes() 建索引。
+        UniqueConstraint(
+            "owner_user_id", "source_id", name="uq_talent_owner_source"
+        ),
     )
 
 

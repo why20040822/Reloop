@@ -63,6 +63,59 @@ def init_db() -> None:
         # 表已由其他 worker 建好会抛 1050 —— 忽略, 补列逻辑照常执行。
         logging.getLogger(__name__).warning("[init_db] create_all skipped: %s", e)
     _ensure_columns()
+    _ensure_indexes()
+
+
+def _ensure_indexes() -> None:
+    """幂等补唯一索引(F2, 2026-08-28): 旧库补 uq_talent_owner_source。
+
+    create_all 不会给已存在的表加约束。若表里已有重复数据, 创建唯一索引会失败——
+    此时只告警并提示先跑 scripts/dedup_talents.py, 不阻塞启动。
+    """
+    import logging
+
+    from sqlalchemy import text
+
+    logger = logging.getLogger(__name__)
+    idx_name = "uq_talent_owner_source"
+    try:
+        with engine.begin() as conn:
+            if engine.dialect.name == "mysql":
+                has = conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM information_schema.statistics "
+                        "WHERE table_schema = DATABASE() "
+                        "AND table_name = 'talent_profiles' AND index_name = :i"
+                    ),
+                    {"i": idx_name},
+                ).scalar()
+                if has:
+                    return
+                stmt = (
+                    "ALTER TABLE talent_profiles "
+                    "ADD UNIQUE KEY uq_talent_owner_source (owner_user_id, source_id)"
+                )
+            else:  # sqlite
+                row = conn.execute(
+                    text(
+                        "SELECT COUNT(*) FROM sqlite_master "
+                        "WHERE type='index' AND name = :i"
+                    ),
+                    {"i": idx_name},
+                ).scalar()
+                if row:
+                    return
+                stmt = (
+                    "CREATE UNIQUE INDEX uq_talent_owner_source "
+                    "ON talent_profiles (owner_user_id, source_id)"
+                )
+            conn.execute(text(stmt))
+            logger.info("[init_db] unique index uq_talent_owner_source created")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(
+            "[init_db] 唯一索引 uq_talent_owner_source 创建失败(表里可能有历史重复数据): %s; "
+            "请先运行 python scripts/dedup_talents.py 去重后重启", e
+        )
 
 
 def _ensure_columns() -> None:

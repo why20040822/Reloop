@@ -33,6 +33,15 @@ logger = logging.getLogger(__name__)
 _SYNC_PROGRESS: dict[str, dict] = {}
 _SYNC_LOCK = threading.Lock()
 
+# per-owner 同步幂等锁(F3, 2026-08-28): 同一 owner 已有 running 同步时,
+# 重复触发直接返回进行中的 sync_id, 不再并开全量同步线程。
+# 注意: 这是进程内锁, gunicorn 多 worker 下跨 worker 由"唯一约束(F2)+
+# IntegrityError 兜底(F4)"兜底数据正确性; 跨进程 running 标记在 Phase 2
+# (进度落库 sync_runs 表)补齐。
+_OWNER_SYNC_ACTIVE: dict[str, dict] = {}  # owner -> {"sync_id": str, "ts": float}
+_OWNER_SYNC_LOCK = threading.Lock()
+_OWNER_SYNC_STALE_SECONDS = 30 * 60  # 超过 30 分钟视为僵死, 允许重新触发
+
 
 class TTCAuthRequired(RuntimeError):
     """TTC API requires a valid service or user authentication token."""
@@ -265,10 +274,30 @@ class TalentSyncService:
                 db.close()
 
     def sync_for_user_async(self, owner_user_id: str, **kwargs) -> str:
-        """后台异步同步: 返回 sync_id, 前端轮询进度。"""
-        sync_id = _make_sync_id(owner_user_id)
+        """后台异步同步: 返回 sync_id, 前端轮询进度。
+
+        幂等(F3): 同一 owner 已有 running 同步且未僵死时, 直接返回该 sync_id,
+        不再并开第二个全量同步(防重复数据 + 防 LLM 费用放大)。
+        """
+        now = time.time()
+        with _OWNER_SYNC_LOCK:
+            active = _OWNER_SYNC_ACTIVE.get(owner_user_id)
+            if active and now - active["ts"] < _OWNER_SYNC_STALE_SECONDS:
+                info = get_sync_progress(active["sync_id"])
+                if info.get("status") == "running":
+                    logger.info("[sync] owner=%s 已有 running 同步 sync_id=%s, 复用",
+                                owner_user_id, active["sync_id"])
+                    return active["sync_id"]
+            sync_id = _make_sync_id(owner_user_id)
+            _OWNER_SYNC_ACTIVE[owner_user_id] = {"sync_id": sync_id, "ts": now}
         _update_progress(sync_id, total=0, current=0, status="running",
                          message="准备中…", owner=owner_user_id)
+
+        def _release():
+            with _OWNER_SYNC_LOCK:
+                cur = _OWNER_SYNC_ACTIVE.get(owner_user_id)
+                if cur and cur["sync_id"] == sync_id:
+                    _OWNER_SYNC_ACTIVE.pop(owner_user_id, None)
 
         def _bg():
             try:
@@ -282,6 +311,8 @@ class TalentSyncService:
             except Exception as e:  # noqa: BLE001
                 logger.exception("[sync] async failed owner=%s", owner_user_id)
                 _update_progress(sync_id, status="failed", message=str(e)[:200])
+            finally:
+                _release()
 
         threading.Thread(target=_bg, daemon=True).start()
         return sync_id

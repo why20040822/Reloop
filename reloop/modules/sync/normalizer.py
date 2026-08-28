@@ -19,6 +19,7 @@ TTC 页面需飞书登录, 真实接口字段以站点 XHR 为准;
 """
 
 import datetime as dt
+import hashlib
 import re
 from typing import Optional
 
@@ -160,6 +161,24 @@ def _first(seq):
     return seq[0] if seq else None
 
 
+def talent_fingerprint(item: dict) -> str:
+    """缺 id 时的稳定指纹兜底(F1, 2026-08-28): 绝不落空 source_id。
+
+    source_id 为空 => sync 编排跳过查重 => 每次导入无条件 INSERT => 重复数据。
+    用 name/phone/email/company/position 生成确定性指纹, 同一人重复导入得到
+    相同指纹 -> 走 upsert 更新而不是新增。真实 id 永远优先, 指纹只是兜底。
+    """
+    parts = [
+        str((item.get("basic") or {}).get("name") or item.get("name") or ""),
+        str(_first((item.get("basic") or {}).get("phone") or []) or item.get("contact_phone") or ""),
+        str(_first((item.get("basic") or {}).get("email") or []) or item.get("contact_email") or ""),
+        str(((item.get("work") or {}).get("macro") or {}).get("current_company_name") or item.get("company") or ""),
+        str(((item.get("work") or {}).get("macro") or {}).get("current_position") or item.get("position") or ""),
+    ]
+    raw = "|".join(parts).strip().lower()
+    return "fp_" + hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
 def _trunc(value, n: int):
     """截断到列长度上限(超长字段全文仍在 raw/source_payload 里留底)。"""
     if isinstance(value, str) and len(value) > n:
@@ -220,16 +239,14 @@ def _normalize_ttc_api_item(item: dict) -> dict:
     contact_phone = _first(basic.get("phone") or [])
     contact_email = _first(basic.get("email") or [])
 
-    # 活跃时间: 人才在 TTC 平台的最后更新(简历更新时间, 活跃度核心参考维度);
-    # 无 dynamic 段的人才用入库时间 created_at 兜底。
-    last_active_at = parse_datetime(
-        dyn_macro.get("last_updated_at") or item.get("created_at")
-    )
+    # 活跃时间(v3 2026-08-28): 只信真实时间字段, 不再用 created_at 兜底——
+    # created_at 是"入库时间", 兜底会让新导入记录全员伪装"刚活跃",
+    # 是"全员活跃"失真的数据源头。缺字段就落 None(未知), 宁缺勿假。
+    last_active_at = parse_datetime(dyn_macro.get("last_updated_at"))
     resume_updated_at = parse_datetime(
         dyn_macro.get("resume_updated_at")
         or dyn_macro.get("resumeUpdatedAt")
         or dyn_macro.get("last_updated_at")
-        or item.get("created_at")
     )
 
     target_positions = dyn_macro.get("target_positions") or []
@@ -303,7 +320,7 @@ def _normalize_ttc_api_item(item: dict) -> dict:
     summary = " | ".join(p for p in parts if p)
 
     return {
-        "source_id": str(item.get("id") or ""),
+        "source_id": str(item.get("id") or "") or talent_fingerprint(item),
         "name": _trunc(str(name), 128),
         "base_location": _trunc(base_location, 64),
         "company": _trunc(company, 128),
@@ -515,7 +532,7 @@ def normalize_talent(raw_item: dict) -> Optional[dict]:
         summary = " | ".join(p for p in parts if p)
 
     return {
-        "source_id": str(_pick(raw_item, "source_id") or ""),
+        "source_id": str(_pick(raw_item, "source_id") or "") or talent_fingerprint(raw_item),
         "name": str(name),
         "base_location": _pick(raw_item, "base_location"),
         "company": company,

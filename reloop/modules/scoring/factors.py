@@ -93,7 +93,14 @@ def days_since_latest_event(events: Iterable[dict],
 
 
 def absolute_activity(days_since_latest: Optional[float],
-                      window: float = ACTIVITY_ABS_WINDOW) -> float:
+                      window: Optional[float] = None) -> float:
+    """纯绝对活跃分 ∈ [FACTOR_FLOOR, 1]: 距最近事件越近分越高, 超窗口触底。
+
+    v3(2026-08-28): 窗口默认改由配置 BRAINX_ACTIVITY_ABS_WINDOW 控制(默认 90 天)。
+    days_since_latest=None(无任何可信时间信号) -> FACTOR_FLOOR, 不冒充活跃。
+    """
+    if window is None:
+        window = settings.activity_abs_window
     if days_since_latest is None:
         return FACTOR_FLOOR
     return max(FACTOR_FLOOR, min(1.0, 1.0 - days_since_latest / window))
@@ -102,14 +109,13 @@ def absolute_activity(days_since_latest: Optional[float],
 def hybrid_activity_normalize(raws: Sequence[float],
                               latest_days: Sequence[Optional[float]],
                               alpha: Optional[float] = None) -> list[float]:
-    if alpha is None:
-        alpha = settings.activity_absolute_weight
-    absolutes = [absolute_activity(d) for d in latest_days]
-    relatives = min_max_normalize(list(raws))
-    return [
-        max(FACTOR_FLOOR, min(1.0, alpha * a + (1.0 - alpha) * r))
-        for a, r in zip(absolutes, relatives)
-    ]
+    """活跃度归一化(v3): 纯绝对衰减。
+
+    批内 min-max 相对归一化已废除(2026-08-28): 它保证池内必然有人得 1.0,
+    即使全员都不活跃也会造出"活跃分布", 是"全员活跃"失真的算法级放大器。
+    保留函数名与签名以兼容旧调用方; raws 参数已不参与计算。
+    """
+    return [absolute_activity(d) for d in latest_days]
 
 
 def _utcnow_naive() -> dt.datetime:

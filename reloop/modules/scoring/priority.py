@@ -16,14 +16,22 @@ from reloop.config import settings
 
 @dataclass
 class FactorScores:
-    """双因子归一化分值(均 ∈ [0,1])。"""
+    """双因子归一化分值(均 ∈ [0,1])。
+
+    activity_status(v3 活跃门禁 2026-08-28):
+      active   = 距最近事件 <= activity_inactive_days
+      inactive = 超过门禁天数, 活跃分已乘 activity_gate_penalty 软降权
+      unknown  = 无任何可信时间信号, 活跃分触底 FACTOR_FLOOR
+    """
     activity: float = 0.0
     match: float = 0.0
+    activity_status: str = "active"
 
     def as_dict(self) -> dict:
         return {
             "activity": round(self.activity, 4),
             "match": round(self.match, 4),
+            "activity_status": self.activity_status,
         }
 
 

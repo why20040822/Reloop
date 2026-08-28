@@ -7,7 +7,12 @@ from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_db, owner_user_id
 from reloop.config import settings
-from reloop.db.models import InteractionRecord, TalentProfile
+from reloop.db.models import (
+    FeedbackLog,
+    InteractionRecord,
+    Recommendation,
+    TalentProfile,
+)
 from reloop.schemas.talent import InteractionCreate, TalentOut
 from reloop.utils.isolation import assert_owner
 
@@ -146,6 +151,20 @@ def delete_talent(
     if not t:
         raise HTTPException(404, "人才不存在")
     assert_owner(TalentProfile, t, owner)
+    # BUG-105(2026-08-28): 级联清理关联行, 不再留孤儿数据
+    # (interaction_records / feedback_logs / recommendations)
+    db.query(InteractionRecord).filter(
+        InteractionRecord.owner_user_id == owner,
+        InteractionRecord.talent_id == talent_id,
+    ).delete(synchronize_session=False)
+    db.query(FeedbackLog).filter(
+        FeedbackLog.owner_user_id == owner,
+        FeedbackLog.talent_id == talent_id,
+    ).delete(synchronize_session=False)
+    db.query(Recommendation).filter(
+        Recommendation.owner_user_id == owner,
+        Recommendation.talent_id == talent_id,
+    ).delete(synchronize_session=False)
     db.delete(t)
     db.commit()
     return {"ok": True}

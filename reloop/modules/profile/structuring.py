@@ -12,6 +12,7 @@
 import logging
 from typing import Optional
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from reloop.db.models import TalentProfile
@@ -117,11 +118,37 @@ class StructuringService:
             profile = TalentProfile(owner_user_id=owner_user_id, source_id=sid, **fields)
             db.add(profile)
 
-        if commit:
-            db.commit()
-            db.refresh(profile)
-        else:
-            db.flush()
+        # F4(2026-08-28): 唯一约束(uq_talent_owner_source)下的并发兜底——
+        # 查重与 INSERT 之间的竞态窗口撞唯一约束时, 降级为按 (owner, source_id)
+        # 更新而不是 500。只捕获 IntegrityError, 其他异常照常抛出。
+        try:
+            if commit:
+                db.commit()
+                db.refresh(profile)
+            else:
+                db.flush()
+        except IntegrityError:
+            db.rollback()
+            if not sid:
+                raise
+            existing = (
+                db.query(TalentProfile)
+                .filter(
+                    TalentProfile.owner_user_id == owner_user_id,
+                    TalentProfile.source_id == sid,
+                )
+                .first()
+            )
+            if existing is None:
+                raise
+            for k, v in fields.items():
+                setattr(existing, k, v)
+            profile = existing
+            if commit:
+                db.commit()
+                db.refresh(profile)
+            else:
+                db.flush()
         logger.info("[structure] saved talent id=%s owner=%s", profile.id, owner_user_id)
         return profile
 

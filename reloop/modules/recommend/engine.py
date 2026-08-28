@@ -75,6 +75,32 @@ class RecommendEngine:
 
     # ================= 对外入口 =================
 
+    def _backfill_status(self, db: Session, owner: str, result: dict) -> dict:
+        """BUG-101(2026-08-28): 缓存命中的最终结果回填反馈状态。
+
+        缓存 JSON 是计算时刻的快照(当时全部 pending), 用户后续 confirm/reject
+        写在 recommendations 表上。回填后刷新页面/命中缓存不再"状态回到 pending"。
+        """
+        run_id = result.get("run_id")
+        items = result.get("top_n") or []
+        if not run_id or run_id == "preview" or not items:
+            return result
+        rows = (
+            db.query(Recommendation.talent_id, Recommendation.status)
+            .filter(
+                Recommendation.owner_user_id == owner,
+                Recommendation.run_id == run_id,
+            )
+            .all()
+        )
+        smap = {tid: (st or "pending") for tid, st in rows}
+        if not smap:
+            return result
+        for key in ("top3", "top10", "top_n"):
+            for it in result.get(key) or []:
+                it["status"] = smap.get(it.get("talent_id"), it.get("status") or "pending")
+        return result
+
     def compute(
         self,
         db: Session,
@@ -130,6 +156,7 @@ class RecommendEngine:
             result["phase"] = "final"
             result["cached"] = True
             result["computing"] = False
+            self._backfill_status(db, owner_user_id, result)
             logger.info("[recommend] memory cache hit key=%s pos=%s", cache_key[:12], pos.position_name)
             return result
 
@@ -141,6 +168,7 @@ class RecommendEngine:
             result["phase"] = "final"
             result["cached"] = True
             result["computing"] = False
+            self._backfill_status(db, owner_user_id, result)
             # 同时更新进程内缓存
             _FINAL_CACHE[cache_key] = (time.time(), result)
             logger.info("[recommend] db cache hit key=%s pos=%s", cache_key[:12], pos.position_name)
@@ -236,6 +264,7 @@ class RecommendEngine:
             result["phase"] = "final"
             result["cached"] = True
             result["computing"] = False
+            self._backfill_status(db, owner_user_id, result)
             return result
 
         if run.status == "running":
@@ -368,6 +397,8 @@ class RecommendEngine:
                     "tags": t.tags or [],
                     "updated_at": _iso(t.updated_at),
                     "contact_reason": f"快速初筛: 近期活跃且与{pos.position_name}岗位相关, 精算理由生成中。",
+                    "status": "pending",
+                    "activity_status": r.breakdown.activity_status,
                 }
             )
         return {
@@ -566,18 +597,28 @@ class RecommendEngine:
         now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         interactions_by_talent = self._load_interactions(db, owner, talents)
 
-        # ---- 活跃度(全部人才) ----
-        act_raw: dict[int, float] = {}
-        act_latest: dict[int, Optional[float]] = {}
+        # ---- 活跃度(全部人才; v3 纯绝对衰减 + 门禁 2026-08-28) ----
+        # 批内相对归一化已废除: 活跃分=纯绝对衰减, 跨池可比、不随导入批次重排。
+        act_norm: dict[int, float] = {}
+        act_status: dict[int, str] = {}
         for t in talents:
             its = interactions_by_talent.get(t.id, [])
             events = factors.build_activity_events(t.last_active_at, t.resume_updated_at, its)
-            act_raw[t.id] = factors.activity_score(events, now=now)
-            act_latest[t.id] = factors.days_since_latest_event(events, now=now)
-        act_norm = dict(
-            zip(act_raw.keys(), factors.hybrid_activity_normalize(
-                list(act_raw.values()), list(act_latest.values())))
-        )
+            days = factors.days_since_latest_event(events, now=now)
+            if days is None:
+                # 无任何可信时间信号: 触底分, 明确标记 unknown, 不冒充活跃
+                status = "unknown"
+            elif days > settings.activity_inactive_days:
+                status = "inactive"
+            else:
+                status = "active"
+            act_status[t.id] = status
+            score = factors.absolute_activity(days)
+            if status == "inactive":
+                # A4 软门禁: 超过门禁天数, 活跃分乘 penalty 软降权
+                # (观察期方案; 收紧为"直接排除"只需把 penalty 调 0 并过滤)
+                score = max(0.0, score * settings.activity_gate_penalty)
+            act_norm[t.id] = score
 
         # ---- 岗位匹配度 ----
         jd_text = pos.jd_text or pos.position_name
@@ -648,6 +689,7 @@ class RecommendEngine:
             fs = FactorScores(
                 activity=act_norm.get(t.id, 0.0),
                 match=max(0.0, min(1.0, match)),
+                activity_status=act_status.get(t.id, "unknown"),
             )
             candidates.append((t.id, fs))
         return rank_candidates(candidates, sort_by=sort_by, w_activity=w_activity, w_match=w_match)
@@ -733,6 +775,10 @@ class RecommendEngine:
                     "tags": t.tags or [],
                     "updated_at": _iso(t.updated_at),
                     "contact_reason": reason,
+                    # BUG-101(2026-08-28): 序列化反馈状态, 修复"点确认后刷新回 pending"
+                    "status": "pending",
+                    # v3 活跃门禁: active | inactive | unknown
+                    "activity_status": r.breakdown.activity_status,
                 }
             )
         db.commit()
