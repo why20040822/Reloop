@@ -208,6 +208,17 @@ resume_updated_at               简历更新时间 (活跃度核心参考维度)
 
 ## 四、如何运行
 
+### ⚠️ 部署硬约束：uvicorn 必须保持 `--workers 1`（单 worker）
+
+生产 systemd 单元（`reloop.service`）以 `uvicorn --workers 1` 运行，**这是正确性前提，不是性能调优项**：
+
+- **TTC 一键扫码绑定**（auto_login）的会话存在进程内存里——多 worker 下轮询请求落到别的进程，扫码绑定会随机报"会话不存在"；
+- **同步进度**（`/sync/ttc/status`）同样是进程内状态——多 worker 下进度条时灵时不灵；
+- **per-owner 同步幂等锁**只在单进程内有效——多 worker 可并开全量同步（重复数据 + LLM 费用放大）。
+
+**扩多 worker 之前必须先完成 sync_runs 落库改造**（见 `docs/plans/2026-08-28-architecture-upgrade-blueprint.md` R6），
+把上述状态从进程内存迁到数据库。
+
 ### 环境要求
 
 - Python 3.11+（建议 conda 环境 `reloop`）
