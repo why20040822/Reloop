@@ -279,3 +279,28 @@ def rs_structuring(db, owner):
     return structuring_service.enrich_and_save(
         db, owner, {"name": "测试", "summary": "五年后端经验, 精通 Python"},
         source_id="emb-src-1", commit=True)
+
+
+def test_batch_match_maps_sequence_idx_to_real_ids(monkeypatch):
+    """潜伏 bug 修复(2026-08-28): 模型回显批内序号 1..N 时必须映射回真实 id。
+
+    生产 talent id 是大整数, 旧实现 result[idx] 用序号当 id -> LLM 精算
+    在生产从未生效(测试环境 id 恰为 1..N 被掩盖)。
+    """
+    from reloop.modules.profile.llm import llm_service
+    llm_service._chat_circuit_open = False
+    monkeypatch.setattr(llm_service, "_chat_online", True, raising=False)
+    monkeypatch.setattr(llm_service, "_has_key", True, raising=False)
+
+    def fake_chat(prompt):
+        return '[{"idx": 1, "score": 0.9}, {"idx": 2, "score": 0.1}]'
+    monkeypatch.setattr(llm_service, "chat", fake_chat)
+
+    cands = [
+        {"idx": 9862, "name": "甲", "position": "后端", "company": "X",
+         "skills": ["python"], "work_years": 4, "education": "本科"},
+        {"idx": 9901, "name": "乙", "position": "运营", "company": "Y",
+         "skills": ["新媒体"], "work_years": 1, "education": "大专"},
+    ]
+    out = llm_service.batch_match_scores("后端开发", "jd", cands, jd_skills=["python"])
+    assert out == {9862: 0.9, 9901: 0.1}, "序号 1/2 应映射回真实 id 9862/9901"

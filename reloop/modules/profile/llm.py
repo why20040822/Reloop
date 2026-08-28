@@ -448,6 +448,12 @@ class LLMService:
                                len(data) if isinstance(data, list) else -1,
                                len(batch))
                 continue
+            # 修复(2026-08-28 潜伏 bug): 模型回显的 idx 是批内序号 1..N
+            # (prompt 示例即如此), 而装配层按真实 talent id 查表 —— 生产环境
+            # id 为大整数, 序号永远 miss, LLM 精算从未真正生效(测试环境 id
+            # 恰为 1..N 而被掩盖)。序号<->真实 id 双向兼容映射。
+            seq_to_idx = {j + 1: c["idx"] for j, c in enumerate(batch)}
+            valid_idx = {c["idx"] for c in batch}
             for item in data:
                 try:
                     idx = int(item.get("idx"))
@@ -455,8 +461,11 @@ class LLMService:
                 except (TypeError, ValueError):
                     continue
                 score = max(0.0, min(1.0, score))
-                result[idx] = score
-                _MATCH_SCORE_CACHE[(position_name, jd_text, idx, skills_key)] = score
+                tid = idx if idx in valid_idx else seq_to_idx.get(idx)
+                if tid is None:
+                    continue
+                result[tid] = score
+                _MATCH_SCORE_CACHE[(position_name, jd_text, tid, skills_key)] = score
         # M1(2026-08-28 审计采纳): 已删除"分位校准"(把本批分数线性映射到 [0.1,0.9])。
         # 那是批内相对归一化——同一候选人在强批次被压低、弱批次被抬高, 跨岗位/跨时间
         # 不可比, 与活跃度已废除的 min-max 同病。绝对评分锚定由 BATCH_MATCH_PROMPT
