@@ -48,3 +48,6 @@ extract_docx.py
 hanyu接下来的文档/
 
 node_modules/
+
+# 本地测试/运行产生的数据库文件
+*.db

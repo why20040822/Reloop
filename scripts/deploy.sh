@@ -44,6 +44,11 @@ cd /tmp && rm -rf reloop_incoming && mkdir reloop_incoming
 tar xzf /tmp/reloop_deploy.tgz -C reloop_incoming
 rm -f reloop_incoming/.env reloop_incoming/.env.*
 cp -a reloop_incoming/. /opt/reloop/
+# 清理旧 bundle 残留(cp -a 不会删除): 只保留 index.html 引用的那份
+KEEP=$(grep -o 'index-[^"]*\.js' /opt/reloop/webapp/index.html | head -1)
+for f in /opt/reloop/webapp/assets/index-*.js; do
+  [ "$(basename "$f")" != "$KEEP" ] && rm -f "$f"
+done
 # 兜底清理历史 macOS AppleDouble 垃圾(根治后应为 0, 此行保险)
 find /opt/reloop -name '._*' -delete 2>/dev/null || true
 chown -R reloop:reloop /opt/reloop
