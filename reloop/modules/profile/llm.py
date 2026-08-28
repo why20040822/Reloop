@@ -44,12 +44,6 @@ REASON_PROMPT = (
     "候选人: {talent}\n当前岗位: {position}\nJD摘要: {jd}"
 )
 
-TENDENCY_PROMPT = (
-    "分析以下与某候选人的沟通记录/备注, 判断其换工作意愿。"
-    "只输出 JSON: {{\"score\": 0~1浮点, \"reason\": \"一句话理由\"}}。"
-    "无明确信号时 score=0.5。\n\n记录:\n{text}"
-)
-
 BATCH_MATCH_PROMPT = (
     "你是招聘匹配评估专家。评估候选人简历与目标岗位的整体匹配度。\n\n"
     "【目标岗位】\n{position_name}\n\n"
@@ -278,18 +272,6 @@ class LLMService:
         out = self.chat(REASON_PROMPT.format(talent=talent, position=position, jd=jd[:500]))
         return out or f"近期活跃且与{position}岗位匹配, 建议尽快联系。"
 
-    def analyze_tendency(self, records: str) -> tuple[Optional[float], str]:
-        """返回 (0~1 分, 理由)。离线返回 (None, 说明)。"""
-        if not self._chat_online:
-            return None, "无 LLM, 未分析"
-        data = self.chat_json(TENDENCY_PROMPT.format(text=records[:2000] or "无记录"))
-        if not data:
-            return None, "LLM 未返回有效结果"
-        try:
-            return float(data.get("score")), str(data.get("reason", ""))
-        except (TypeError, ValueError):
-            return None, "LLM 返回格式异常"
-
     # ---------------- 岗位语义相似度(职位匹配 v2) ----------------
     def title_similarity(self, jd_position: str,
                          talent_positions: list[str],
@@ -385,15 +367,10 @@ class LLMService:
                 score = max(0.0, min(1.0, score))
                 result[idx] = score
                 _MATCH_SCORE_CACHE[(position_name, jd_text, idx)] = score
-        # 分位校准：将 LLM 分数按分位映射到 [0.1, 0.9]，避免全员偏高/偏低
-        if result:
-            scores = list(result.values())
-            lo, hi = min(scores), max(scores)
-            if hi - lo > 1e-6:
-                def calibrate(v):
-                    # 线性映射到 [0.1, 0.9]
-                    return 0.1 + 0.8 * (v - lo) / (hi - lo)
-                result = {k: calibrate(v) for k, v in result.items()}
+        # M1(2026-08-28 审计采纳): 已删除"分位校准"(把本批分数线性映射到 [0.1,0.9])。
+        # 那是批内相对归一化——同一候选人在强批次被压低、弱批次被抬高, 跨岗位/跨时间
+        # 不可比, 与活跃度已废除的 min-max 同病。绝对评分锚定由 BATCH_MATCH_PROMPT
+        # 内的 0.0~1.0 分档规则负责。
         return result
 
 
