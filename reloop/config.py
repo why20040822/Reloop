@@ -115,10 +115,8 @@ class Settings(BaseSettings):
     # ---------- 评分权重 (双因子加权乘法模型: 活跃度 + 岗位匹配度) ----------
     score_w_activity: float = 0.3
     score_w_match: float = 0.4
-    # DEPRECATED: 以下权重不再参与核心评分, 保留配置项兼容旧 .env
-    score_w_value: float = 0.15     # DEPRECATED
-    score_w_relation: float = 0.1   # DEPRECATED
-    score_w_tendency: float = 0.05  # DEPRECATED
+    # (2026-08-28 R5) DEPRECATED 权重 score_w_value/relation/tendency 已删除;
+    # 旧 .env 里的同名变量由 pydantic extra=ignore 静默忽略, 无需清理。
     # 噪声阈值: 综合分低于此值视为噪声剔除。match 改用 max(0,cos) 后分数体系更贴近真实
     # (不再虚高), 阈值相应下调到 0.1; 过高会误杀正常候选人, 过低则放进 match≈0 的真不匹配者。
     score_noise_threshold: float = 0.1
