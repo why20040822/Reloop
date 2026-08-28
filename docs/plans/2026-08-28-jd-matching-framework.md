@@ -110,3 +110,15 @@ JD 原文
 | 测试（新） | `tests/test_jd_matching.py` | 10 个用例：特征规范化/覆盖率/解析直通/失配防护/prompt 注入 |
 
 **⚠️ 部署检查单**：① 改动改变了匹配分数语义——**上线后须清一次 `recommend_runs` 缓存**（同 R4）；② 旧缓存键不含技能指纹，清缓存前旧结果不反映新算法；③ 灰度观察 `score_breakdown.match_detail.skill_hits` 是否合理。
+
+## 六、算法护栏 + 上线记录（2026-08-28 23:19-23:35，用户决策：新算法跑 + AI 自检后不对则回退旧算法）
+
+**护栏结构**（commit `1b9b7ec`）：
+- `BRAINX_MATCH_ALGO_V2` 开关（默认 True）：出问题 **.env 一键切回旧算法**，无需回滚代码
+- `_rank` 调度器：v2 出结果后跑 `_self_check_v2`（零成本结构校验：match/activity 分值越界、结果数≠人才数、维度明细非法 → 判失败）；**v2 抛异常或自检不过 → 自动回退 `_rank_v1`（旧算法逐行为还原：原文分词+Jaccard+正则）** 并留日志
+- v1 兜底输出无 `match_detail`，前端可据此区分分数来源
+- 顺带修复幂等测试时序缺陷（mock 瞬间返回赌毫秒窗口 → Event 阻塞到第二次触发后，断言一字未动）
+
+**生产上线验证**（23:35）：部署 active / health 200 → `match_algo_v2=True` 确认 → **清 recommend_runs 8 行 + recommendations**（检查单①）→ 冒烟：guest 池 539 人 compute 成功，top3/top10 正常，`match_detail.source=struct_fallback`（LLM 离线时正确走结构化降级并打标）、自检零触发回退。
+
+**遗留观察**：生产 LLM chat 404（stepfun base 用了 `/v1` 而非 Plus Plan `/step_plan/v1`，服务器 .env 未同步）→ chat 通道熔断，精算走 `struct_fallback`。LLM 通道恢复后自动升回 `llm_struct_mix`，不影响算法护栏。老岗位（无 jd_analysis）hits 为空属预期——parse-jd 新建的岗位才有解析产物。
