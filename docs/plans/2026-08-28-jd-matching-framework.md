@@ -122,3 +122,14 @@ JD 原文
 **生产上线验证**（23:35）：部署 active / health 200 → `match_algo_v2=True` 确认 → **清 recommend_runs 8 行 + recommendations**（检查单①）→ 冒烟：guest 池 539 人 compute 成功，top3/top10 正常，`match_detail.source=struct_fallback`（LLM 离线时正确走结构化降级并打标）、自检零触发回退。
 
 **遗留观察**：生产 LLM chat 404（stepfun base 用了 `/v1` 而非 Plus Plan `/step_plan/v1`，服务器 .env 未同步）→ chat 通道熔断，精算走 `struct_fallback`。LLM 通道恢复后自动升回 `llm_struct_mix`，不影响算法护栏。老岗位（无 jd_analysis）hits 为空属预期——parse-jd 新建的岗位才有解析产物。
+
+## 七、主通道激活 + 改造②基建（2026-08-29 00:14-00:30）
+
+1. **服务器主通道修复**：`BRAINX_LLM_BASE_URL` → `step_plan/v1`、模型 → `step-3.7-flash`、`BRAINX_LLM_TIMEOUT` 30→120s（推理模型批量评分 14-90s/批，30s 必超时熔断）。
+2. **模型选型实证**：step-router-v1 把推理思考文本混进 content（`<ariab-thinking>`）导致 JSON 解析失败 → **弃用**；step-3.7-flash 3/3 稳定返回合法 JSON（14-22s/批）→ 保留。
+3. **重大潜伏 bug 修复（commit `f0f6587`）**：`batch_match_scores` 模型回显批内序号 1..N 被当真实 talent id 查表，生产大整数 id 永远 miss → **LLM 精算在生产从未生效过**（测试环境 id 恰为 1..N 掩盖）。修复为序号↔真实 id 双向映射 + 回归测试。**这是"AI 解析后无法自动匹配"的最深层根因。**
+4. **chat 加固**（commit `e545e80`）：空 content 告警 + reasoning_content 兜底提取 + batch 20→10。
+5. **改造②基建落地**（commit `ce053a2`）：`BRAINX_LLM_EMBED_BASE_URL/KEY` 独立 embed 端点（chat/embed 分属厂商）；`embedding_source` 列（talent_profiles/positions，自动 ALTER）；三个写点标记 real|hash；`scripts/recompute_embeddings.py` 双侧重算脚本（单批失败不误标、embed 离线拒绝执行）。
+6. **生产终验**：compute 冒烟 **source=llm_struct_mix**（LLM 精算首次真正生效）、自检零回退、缓存已清。
+
+**待办**：用户提供 BigModel API key → 服务器 .env 配 `BRAINX_LLM_EMBED_BASE_URL=https://open.bigmodel.cn/api/paas/v4` + `BRAINX_LLM_EMBED_API_KEY` + `BRAINX_LLM_EMBEDDING_MODEL=embedding-3` → 跑 `python scripts/recompute_embeddings.py`（两侧同批重算，~4200 行，预计 30-60 分钟）→ semantic 维从伪语义变真语义。
