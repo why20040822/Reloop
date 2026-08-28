@@ -22,6 +22,7 @@ from reloop.core.activity import (  # noqa: F401
     min_max_normalize,
 )
 from reloop.core.matching import (  # noqa: F401
+    MATCH_BASE_SCORE,
     MATCH_WEIGHTS,
     bigram_dice_similarity,
     cosine_similarity,
@@ -29,7 +30,11 @@ from reloop.core.matching import (  # noqa: F401
     extract_edu_requirement,
     extract_years_requirement,
     match_score_structured,
+    match_score_structured_detail,
+    normalize_skill,
+    normalize_skills,
     skill_coverage,
+    skill_coverage_detail,
     years_fit,
 )
 

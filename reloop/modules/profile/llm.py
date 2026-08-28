@@ -48,6 +48,7 @@ BATCH_MATCH_PROMPT = (
     "你是招聘匹配评估专家。评估候选人简历与目标岗位的整体匹配度。\n\n"
     "【目标岗位】\n{position_name}\n\n"
     "【JD】\n{jd_text}\n\n"
+    "{skills_block}"
     "【候选人列表】\n{candidates}\n\n"
     "评分规则(0~1浮点):\n"
     "- 0.9-1.0: 高度匹配, 核心能力/经验高度对齐, 可快速上手\n"
@@ -360,19 +361,23 @@ class LLMService:
         return result
 
     def batch_match_scores(self, position_name: str, jd_text: str,
-                           candidates: list[dict], batch_size: int = 20) -> dict[int, float]:
+                           candidates: list[dict], batch_size: int = 20,
+                           jd_skills: Optional[list[str]] = None) -> dict[int, float]:
         """批量 JD vs 简历匹配度评分(主通道)。
 
         candidates: [{"idx": 1, "name": "...", "position": "...", "company": "...",
                       "skills": [...], "work_years": N, "education": "..."}, ...]
+        jd_skills: AI 解析出的结构化技能清单(改造①); 提供时 prompt 以
+          结构化要求替代原文片段 —— 省 token、与结构化链路对齐、分数更稳。
         返回 {idx: score}。LLM 不可用时返回空 dict(调用方降级到结构化)。
         """
         if not self._chat_online or not candidates:
             return {}
+        skills_key = tuple(sorted({s for s in (jd_skills or []) if s}))
         result: dict[int, float] = {}
         todo: list[dict] = []
         for c in candidates:
-            cached = _MATCH_SCORE_CACHE.get((position_name, jd_text, c.get("idx")))
+            cached = _MATCH_SCORE_CACHE.get((position_name, jd_text, c.get("idx"), skills_key))
             if cached is not None:
                 result[c["idx"]] = cached
             else:
@@ -386,10 +391,18 @@ class LLMService:
                     f"{j}. {c.get('name', '')}: {c.get('position', '')} @ {c.get('company', '')}, "
                     f"技能: {skills}, {c.get('work_years', '?')}年经验, {c.get('education', '?')}"
                 )
+            if skills_key:
+                skills_block = (
+                    "【岗位技能要求(AI 解析, 逐项对照候选人技能)】\n"
+                    f"{json.dumps(list(skills_key), ensure_ascii=False)}\n\n"
+                )
+            else:
+                skills_block = ""
             prompt = BATCH_MATCH_PROMPT.format(
                 position_name=position_name,
                 jd_text=jd_text[:2000] if jd_text else "",
                 candidates="\n".join(lines),
+                skills_block=skills_block,
             )
             data = self.chat_json_list(prompt)
             if not isinstance(data, list):
@@ -403,7 +416,7 @@ class LLMService:
                     continue
                 score = max(0.0, min(1.0, score))
                 result[idx] = score
-                _MATCH_SCORE_CACHE[(position_name, jd_text, idx)] = score
+                _MATCH_SCORE_CACHE[(position_name, jd_text, idx, skills_key)] = score
         # M1(2026-08-28 审计采纳): 已删除"分位校准"(把本批分数线性映射到 [0.1,0.9])。
         # 那是批内相对归一化——同一候选人在强批次被压低、弱批次被抬高, 跨岗位/跨时间
         # 不可比, 与活跃度已废除的 min-max 同病。绝对评分锚定由 BATCH_MATCH_PROMPT

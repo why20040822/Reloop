@@ -38,6 +38,7 @@ from reloop.db.models import (
 from reloop.modules.profile.llm import _fallback_embed, llm_service
 from reloop.modules.scoring import factors
 from reloop.modules.scoring.priority import FactorScores, rank_candidates
+from reloop.core.jd_features import build_jd_features
 
 logger = logging.getLogger(__name__)
 
@@ -540,7 +541,8 @@ class RecommendEngine:
             .filter(TalentProfile.owner_user_id == owner)
             .all()
         )
-        keywords = self._extract_keywords(pos)
+        keywords = build_jd_features(
+            pos.position_name, pos.jd_text, pos.jd_analysis).recall_keywords
         if not keywords:
             return talents  # 无有效关键词: 全量进精算, 靠五因子排序, 不误杀
 
@@ -562,7 +564,10 @@ class RecommendEngine:
 
     @staticmethod
     def _extract_keywords(pos: Position) -> list[str]:
-        """从岗位名 + JD 提取召回关键词(去重、过滤过短词、限制最多 30 个)。
+        """[已废弃·改造①] 由 core/jd_features.build_jd_features 接管召回词。
+
+        保留仅供兼容参考; 召回/评分均已改用规范化特征(解析技能清单优先)。
+        从岗位名 + JD 提取召回关键词(去重、过滤过短词、限制最多 30 个)。
 
         分词: 按空白/常见分隔符切分, 并保留岗位名整体。无第三方分词依赖。
         """
@@ -621,12 +626,15 @@ class RecommendEngine:
             act_norm[t.id] = score
 
         # ---- 岗位匹配度 ----
+        # 改造①(2026-08-28): jd_analysis 规范化特征直通(skill 清单/年限/学历),
+        # 原文仅作无解析产物时的兜底; 断桥修复 —— 解析字段首次进入评分链路。
+        feats = build_jd_features(pos.position_name, pos.jd_text, pos.jd_analysis)
         jd_text = pos.jd_text or pos.position_name
         if use_llm:
             jd_emb = pos.jd_embedding or llm_service.embed(jd_text)
         else:
             jd_emb = pos.jd_embedding or _fallback_embed(jd_text)
-        jd_kws = self._extract_keywords(pos)
+        jd_kws = feats.recall_keywords
 
         # LLM 职位语义相似度(去重批量, 带缓存)
         title_sim_map: dict[str, float] = {}
@@ -637,8 +645,9 @@ class RecommendEngine:
 
         # 结构化匹配度(全部人才, 用于初筛 + LLM 降级)
         structured_matches: dict[int, float] = {}
+        structured_details: dict[int, dict] = {}
         for t in talents:
-            structured_matches[t.id] = factors.match_score_structured(
+            detail = factors.match_score_structured_detail(
                 position_name=pos.position_name,
                 jd_text=pos.jd_text,
                 jd_keywords=jd_kws,
@@ -650,7 +659,12 @@ class RecommendEngine:
                 jd_embedding=jd_emb,
                 resume_embedding=t.resume_embedding or [],
                 title_semantic=title_sim_map.get(t.position) if t.position in title_sim_map else None,
+                jd_skills=feats.skill_list if feats.source == "analysis" else None,
+                years_min=feats.years_min,
+                edu_min=feats.edu_min,
             )
+            structured_matches[t.id] = detail["score"]
+            structured_details[t.id] = detail
 
         # LLM 批量精算匹配度(仅对结构化匹配度 Top30 的人才调用, 控制耗时)
         llm_match_map: dict[int, float] = {}
@@ -672,7 +686,8 @@ class RecommendEngine:
                 })
             if candidate_infos:
                 llm_results = llm_service.batch_match_scores(
-                    pos.position_name, jd_text or "", candidate_infos
+                    pos.position_name, jd_text or "", candidate_infos,
+                    jd_skills=feats.skill_list if feats.source == "analysis" else None,
                 )
                 for tid, score in llm_results.items():
                     llm_match_map[tid] = score
@@ -684,12 +699,22 @@ class RecommendEngine:
             llm_score = llm_match_map.get(t.id)
             if llm_score is not None:
                 match = 0.6 * llm_score + 0.4 * struct_score
+                match_source = "llm_struct_mix"
             else:
                 match = struct_score
+                match_source = ("struct_fallback"
+                                if use_llm else "struct_prefilter")
+            detail = structured_details.get(t.id, {})
             fs = FactorScores(
                 activity=act_norm.get(t.id, 0.0),
                 match=max(0.0, min(1.0, match)),
                 activity_status=act_status.get(t.id, "unknown"),
+                match_detail={
+                    "source": match_source,
+                    "dims": detail.get("dims"),
+                    "skill_hits": detail.get("skill_hits") or [],
+                    "skill_jd_count": detail.get("skill_jd_count"),
+                } if detail else None,
             )
             candidates.append((t.id, fs))
         return rank_candidates(candidates, sort_by=sort_by, w_activity=w_activity, w_match=w_match)

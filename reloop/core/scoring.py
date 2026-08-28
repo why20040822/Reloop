@@ -26,13 +26,18 @@ class FactorScores:
     activity: float = 0.0
     match: float = 0.0
     activity_status: str = "active"
+    # 改造①可解释性(2026-08-28): 分维度明细+技能命中清单; None 时序列化不含此键
+    match_detail: Optional[dict] = None
 
     def as_dict(self) -> dict:
-        return {
+        d = {
             "activity": round(self.activity, 4),
             "match": round(self.match, 4),
             "activity_status": self.activity_status,
         }
+        if self.match_detail:
+            d["match_detail"] = self.match_detail
+        return d
 
 
 @dataclass
