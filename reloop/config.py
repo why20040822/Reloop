@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     recommend_cache_ttl: int = 7 * 24 * 3600
     # 后台精算超过该秒数仍 running 视为僵死任务, 允许重新触发。默认 15 分钟。
     recommend_run_stale_seconds: int = 900
+    # ---------- 同步限流(R6 2026-08-28) ----------
+    # 同 owner 两次成功同步的最小间隔(秒), 防全量重拉 + LLM 费用放大
+    sync_min_interval_seconds: int = 600
 
     # ---------- 评分权重 (双因子加权乘法模型: 活跃度 + 岗位匹配度) ----------
     score_w_activity: float = 0.3

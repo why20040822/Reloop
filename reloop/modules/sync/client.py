@@ -17,13 +17,14 @@ import logging
 import threading
 import time
 import uuid
+import datetime as dt
 from typing import Optional
 
 import httpx
 
 from reloop.config import settings
 from reloop.db.engine import SessionLocal
-from reloop.db.models import TalentProfile
+from reloop.db.models import SyncRun, TalentProfile
 from reloop.modules.profile.structuring import structuring_service
 from reloop.modules.sync.normalizer import normalize_batch
 
@@ -56,8 +57,29 @@ def _make_sync_id(owner: str) -> str:
 
 
 def get_sync_progress(sync_id: str) -> dict:
+    """查询同步进度: L1 进程内存(快) -> L2 sync_runs 表(跨 worker 事实源, R6)。"""
     with _SYNC_LOCK:
-        return dict(_SYNC_PROGRESS.get(sync_id, {"status": "not_found"}))
+        if sync_id in _SYNC_PROGRESS:
+            return dict(_SYNC_PROGRESS[sync_id])
+    try:
+        db = SessionLocal()
+        try:
+            run = db.query(SyncRun).filter(SyncRun.sync_id == sync_id).first()
+            if run is not None:
+                return {
+                    "status": run.status,
+                    "total": run.total or 0,
+                    "current": run.current or 0,
+                    "synced": run.synced or 0,
+                    "message": run.message or "",
+                    "error": run.error or "",
+                    "owner": run.owner_user_id,
+                }
+        finally:
+            db.close()
+    except Exception:  # noqa: BLE001  DB 不可用时不阻塞状态查询
+        logger.warning("[sync] sync_runs 查询失败 sync_id=%s", sync_id, exc_info=True)
+    return {"status": "not_found"}
 
 
 def _update_progress(sync_id: str, **kwargs):
@@ -227,9 +249,10 @@ class TalentSyncService:
         try:
             count = 0
             skipped = 0
+            # ---- 第一遍(R6): 分类 跳过/更新/新增, 先不写入 ----
+            actions: list[tuple[str, dict, Optional[TalentProfile]]] = []
             for t in talents:
                 sid = t.get("source_id") or None
-                # 去重: 同 source_id 且 source_payload 内容不变则 skip
                 if sid:
                     existing = (
                         db.query(TalentProfile)
@@ -247,17 +270,28 @@ class TalentSyncService:
                             progress_callback(count + skipped, len(talents))
                         continue
                     if existing:
-                        from reloop.modules.profile.structuring import structuring_service as _ss
-                        _ss.enrich_and_save(db, owner_user_id, t, source_id=sid, commit=False)
-                        count += 1
-                        if progress_callback:
-                            progress_callback(count + skipped, len(talents))
+                        actions.append(("update", t, existing))
                         continue
-                row = structuring_service.enrich_and_save(
-                    db, owner_user_id, t, source_id=sid, commit=False
+                actions.append(("insert", t, None))
+
+            # ---- 批量 embedding(R6): 只对 新增+内容变更 调用, 一次网络往返一批 ----
+            embeddings: list = []
+            if actions:
+                from reloop.modules.profile.llm import llm_service
+                embeddings = llm_service.embed_batch(
+                    [(a[1].get("summary") or "") for a in actions]
                 )
-                if row:
-                    count += 1
+
+            # ---- 第二遍: 写入(upsert) ----
+            for i, (kind, t, existing) in enumerate(actions):
+                emb = embeddings[i] if i < len(embeddings) else None
+                structuring_service.enrich_and_save(
+                    db, owner_user_id, t,
+                    source_id=(t.get("source_id") or None),
+                    commit=False,
+                    resume_embedding=emb,
+                )
+                count += 1
                 if progress_callback:
                     progress_callback(count + skipped, len(talents))
             if own_session:
@@ -278,43 +312,117 @@ class TalentSyncService:
     def sync_for_user_async(self, owner_user_id: str, **kwargs) -> str:
         """后台异步同步: 返回 sync_id, 前端轮询进度。
 
-        幂等(F3): 同一 owner 已有 running 同步且未僵死时, 直接返回该 sync_id,
-        不再并开第二个全量同步(防重复数据 + 防 LLM 费用放大)。
+        幂等(R6, 2026-08-28): 双层锁——
+          L1 进程内 _OWNER_SYNC_ACTIVE(同 worker 快路径);
+          L2 sync_runs 表 running 行(跨 worker 事实源, 30min 僵死可覆盖)。
+        任一层命中已有 running 同步即复用其 sync_id, 不再并开全量同步
+        (防重复数据 + 防 LLM 费用放大)。
         """
+        from reloop.db.models import SyncRun  # 局部导入避免环
+
         now = time.time()
+        source = "ingest" if kwargs.get("raw_payload") is not None else str(kwargs.get("source") or "api")
+        sync_id = None
+
+        # ---- L1: 进程内 ----
         with _OWNER_SYNC_LOCK:
             active = _OWNER_SYNC_ACTIVE.get(owner_user_id)
             if active and now - active["ts"] < _OWNER_SYNC_STALE_SECONDS:
                 info = get_sync_progress(active["sync_id"])
                 if info.get("status") == "running":
-                    logger.info("[sync] owner=%s 已有 running 同步 sync_id=%s, 复用",
+                    logger.info("[sync] owner=%s 复用进程内 running 同步 %s",
                                 owner_user_id, active["sync_id"])
                     return active["sync_id"]
+
+        # ---- L2: sync_runs 表(跨 worker) ----
+        db = SessionLocal()
+        try:
+            row = (
+                db.query(SyncRun)
+                .filter(SyncRun.owner_user_id == owner_user_id,
+                        SyncRun.status == "running")
+                .order_by(SyncRun.id.desc())
+                .first()
+            )
+            if row is not None and row.updated_at is not None:
+                age = (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+                       - row.updated_at).total_seconds()
+                if age < _OWNER_SYNC_STALE_SECONDS:
+                    logger.info("[sync] owner=%s 复用 DB running 同步 %s (age=%.0fs)",
+                                owner_user_id, row.sync_id, age)
+                    _OWNER_SYNC_ACTIVE[owner_user_id] = {"sync_id": row.sync_id, "ts": now}
+                    return row.sync_id
+                row.status = "failed"
+                row.error = "stale running sync (worker restart?)"
+                db.commit()
             sync_id = _make_sync_id(owner_user_id)
+            db.add(SyncRun(owner_user_id=owner_user_id, sync_id=sync_id,
+                           source=source, status="running", total=0, current=0))
+            db.commit()
+        except Exception:  # noqa: BLE001  DB 失败降级为纯内存锁, 不阻塞同步
+            logger.warning("[sync] sync_runs 落库失败, 降级进程内锁", exc_info=True)
+            sync_id = sync_id or _make_sync_id(owner_user_id)
+            try:
+                db.rollback()
+            except Exception:  # noqa: BLE001
+                pass
+        finally:
+            db.close()
+
+        with _OWNER_SYNC_LOCK:
             _OWNER_SYNC_ACTIVE[owner_user_id] = {"sync_id": sync_id, "ts": now}
         _update_progress(sync_id, total=0, current=0, status="running",
                          message="准备中…", owner=owner_user_id)
 
-        def _release():
-            with _OWNER_SYNC_LOCK:
-                cur = _OWNER_SYNC_ACTIVE.get(owner_user_id)
-                if cur and cur["sync_id"] == sync_id:
-                    _OWNER_SYNC_ACTIVE.pop(owner_user_id, None)
+        def prog(current, total):
+            _update_progress(sync_id, current=current, total=total,
+                             status="running", message=f"同步中 ({current}/{total})…")
+            # 节流落库(R6): 每 25 条或收尾写一次 DB, 进度跨 worker 可见
+            if current and (current % 25 == 0 or current >= (total or 0)):
+                try:
+                    s = SessionLocal()
+                    try:
+                        s.query(SyncRun).filter(
+                            SyncRun.sync_id == sync_id, SyncRun.status == "running"
+                        ).update({"current": current, "total": total})
+                        s.commit()
+                    finally:
+                        s.close()
+                except Exception:  # noqa: BLE001
+                    pass
 
         def _bg():
             try:
-                def prog(current, total):
-                    _update_progress(sync_id, current=current, total=total,
-                                     status="running", message=f"同步中 ({current}/{total})…")
                 count = self.sync_for_user(owner_user_id, progress_callback=prog, **kwargs)
-                current = get_sync_progress(sync_id).get("current", 0)
+                info = get_sync_progress(sync_id)
                 _update_progress(sync_id, status="done", message=f"同步完成: {count} 人",
-                                 current=max(current, count), synced=count)
+                                 current=max(info.get("current", 0) or 0, count), synced=count)
             except Exception as e:  # noqa: BLE001
                 logger.exception("[sync] async failed owner=%s", owner_user_id)
                 _update_progress(sync_id, status="failed", message=str(e)[:200])
             finally:
-                _release()
+                # 终态回写 DB(进度查询的跨进程事实源)
+                try:
+                    s = SessionLocal()
+                    try:
+                        info = get_sync_progress(sync_id)
+                        s.query(SyncRun).filter(SyncRun.sync_id == sync_id).update({
+                            "status": info.get("status", "done"),
+                            "synced": info.get("synced") or 0,
+                            "current": info.get("current") or 0,
+                            "total": info.get("total") or 0,
+                            "message": (info.get("message") or "")[:256],
+                            "error": (info.get("error") or "")[:2000],
+                        })
+                        s.commit()
+                    finally:
+                        s.close()
+                except Exception:  # noqa: BLE001
+                    logger.warning("[sync] sync_runs 终态回写失败 sync_id=%s", sync_id, exc_info=True)
+                with _OWNER_SYNC_LOCK:
+                    cur = _OWNER_SYNC_ACTIVE.get(owner_user_id)
+                    if cur and cur["sync_id"] == sync_id:
+                        _OWNER_SYNC_ACTIVE.pop(owner_user_id, None)
 
         threading.Thread(target=_bg, daemon=True).start()
         return sync_id

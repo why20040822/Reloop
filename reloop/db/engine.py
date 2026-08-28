@@ -138,6 +138,8 @@ def _ensure_columns() -> None:
             ("ttc_bound_name", "VARCHAR(128) NULL"),
             ("last_sync_at", "DATETIME NULL"),
             ("last_sync_count", "INTEGER NULL"),
+            # R4(2026-08-28): 会话版本(token 吊销)
+            ("session_version", "INTEGER NOT NULL DEFAULT 0"),
         ],
         "talent_profiles": [
             ("notes", "TEXT NULL"),

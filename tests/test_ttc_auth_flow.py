@@ -179,7 +179,8 @@ def test_invalid_session_token_does_not_silently_become_guest(monkeypatch):
     assert "登录态" in response.json()["detail"]
 
 
-def test_async_sync_ids_are_unique_and_report_synced_count():
+def test_async_sync_idempotent_for_same_owner_and_reports_synced_count():
+    """R6(2026-08-28) 新语义: 同 owner 已有 running 同步时, 重复触发必须复用同一 sync_id。"""
     with patch.object(talent_sync_service, "sync_for_user", return_value=3):
         first = talent_sync_service.sync_for_user_async("fs_sync_test")
         second = talent_sync_service.sync_for_user_async("fs_sync_test")
@@ -187,12 +188,40 @@ def test_async_sync_ids_are_unique_and_report_synced_count():
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             first_status = get_sync_progress(first)
-            second_status = get_sync_progress(second)
-            if first_status.get("status") == second_status.get("status") == "done":
+            if first_status.get("status") == "done":
                 break
             time.sleep(0.01)
 
-    assert first != second
+    assert second == first, "同 owner running 中重复触发必须复用 sync_id(幂等)"
     assert first_status["synced"] == 3
     assert first_status["current"] == 3
-    assert second_status["synced"] == 3
+
+
+def test_async_sync_new_id_after_previous_done():
+    """R6(2026-08-28): 上一次同步完成后, 新触发应产生新的 sync_id。
+
+    注意时序: 内存态 done 与 sync_runs 终态回写之间有毫秒级窗口,
+    该窗口内触发会被 L2 锁幂等复用——所以轮询直到拿到新 id 为止。
+    """
+    with patch.object(talent_sync_service, "sync_for_user", return_value=1):
+        first = talent_sync_service.sync_for_user_async("fs_sync_done_test")
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if get_sync_progress(first).get("status") == "done":
+                break
+            time.sleep(0.01)
+
+        second = first
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline and second == first:
+            second = talent_sync_service.sync_for_user_async("fs_sync_done_test")
+            if second == first:
+                time.sleep(0.05)
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if get_sync_progress(second).get("status") == "done":
+                break
+            time.sleep(0.01)
+
+    assert first != second, "上次完成后应允许新的同步"
+    assert get_sync_progress(second).get("status") == "done"

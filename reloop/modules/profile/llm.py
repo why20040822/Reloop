@@ -258,6 +258,43 @@ class LLMService:
                 self._embed_note_failure()
         return _fallback_embed(text)
 
+    def embed_batch(self, texts: list[str], batch_size: int = 16) -> list:
+        """批量向量(R6 2026-08-28): 一次网络往返一批, 替代逐人调用。
+
+        - 无 key/熔断 -> 全部走本地哈希向量兜底
+        - 单批失败 -> 仅该批降级, 不影响其他批
+        - 输出顺序与输入 texts 一一对应
+        """
+        if not texts:
+            return []
+        if not self._embed_online:
+            return [_fallback_embed(t) for t in texts]
+        result: list = []
+        for i in range(0, len(texts), batch_size):
+            chunk = [(t or "")[:8000] for t in texts[i:i + batch_size]]
+            try:
+                resp = httpx.post(
+                    f"{self.base_url}/embeddings",
+                    headers={"Authorization": f"Bearer {self.api_key}"},
+                    json={"model": self.embed_model, "input": chunk},
+                    timeout=settings.llm_timeout,
+                )
+                resp.raise_for_status()
+                data = resp.json()["data"]
+                vecs: list = [None] * len(chunk)
+                for item in data:
+                    vecs[int(item["index"])] = item["embedding"]
+                if any(v is None for v in vecs):
+                    raise ValueError("embedding 返回缺项")
+                self._embed_note_success()
+                result.extend(vecs)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("[llm] embed_batch 第 %d 批失败(该批降级哈希向量): %s",
+                               i // batch_size + 1, e)
+                self._embed_note_failure()
+                result.extend(_fallback_embed(t) for t in chunk)
+        return result
+
     # ---------------- 业务封装 ----------------
     def structure_talent(self, text: str) -> dict:
         """原始文本 -> 标准结构化字段(LLM)。离线时返回空 dict, 由调用方兜底。"""

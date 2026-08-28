@@ -1,11 +1,13 @@
 """Sync the guest shared talent pool or a logged-in user's personal TTC pool."""
 
+import datetime as dt
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from reloop.api.deps import get_current_user, get_db, owner_user_id
 from reloop.config import settings
-from reloop.db.models import User
+from reloop.db.models import SyncRun, User
 from reloop.modules.auth.vault import VaultError, unseal_user_token
 from reloop.modules.sync.client import get_sync_progress, talent_sync_service
 from reloop.schemas.talent import SyncIngestBody
@@ -13,9 +15,31 @@ from reloop.schemas.talent import SyncIngestBody
 router = APIRouter(prefix="/sync", tags=["数据同步"])
 
 
+def _check_rate_limit(db: Session, owner: str) -> None:
+    """R6(2026-08-28): 同 owner 成功同步最小间隔, 防全量重拉 + LLM 费用放大。"""
+    if settings.sync_min_interval_seconds <= 0:
+        return
+    last_done = (
+        db.query(SyncRun)
+        .filter(SyncRun.owner_user_id == owner, SyncRun.status == "done")
+        .order_by(SyncRun.id.desc())
+        .first()
+    )
+    if last_done is None or last_done.updated_at is None:
+        return
+    age = (dt.datetime.now(dt.timezone.utc).replace(tzinfo=None) - last_done.updated_at).total_seconds()
+    if age < settings.sync_min_interval_seconds:
+        wait = int(settings.sync_min_interval_seconds - age)
+        raise HTTPException(
+            status_code=429,
+            detail=f"同步过于频繁, 请 {wait} 秒后再试(上次完成于 {int(age)} 秒前; 数据未变化时同步本就不产生更新)",
+        )
+
+
 @router.post("/ttc", summary="从 TTC 人才库接口拉取并同步(访客共享库/登录用户个人库, 异步)")
 def sync_from_ttc(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     owner = user.user_id
+    _check_rate_limit(db, owner)
     if owner == settings.guest_owner_id:
         token = settings.ttc_shared_auth_token
         if not token:

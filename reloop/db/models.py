@@ -62,6 +62,8 @@ class User(Base):
     ttc_bound_name: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     last_sync_at: Mapped[Optional[dt.datetime]] = mapped_column(DateTime, nullable=True)
     last_sync_count: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    # 会话版本(R4 2026-08-28): 登出/吊销时自增, 旧 token 立即失效
+    session_version: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
 
 
@@ -272,3 +274,34 @@ class FeedbackLog(Base):
     corrected_tag: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+
+
+# ---------------------------------------------------------------------
+# 同步运行记录 (R6 2026-08-28): 进度 + per-owner 幂等锁的跨进程事实源。
+# 替代进程内 _SYNC_PROGRESS/_OWNER_SYNC_ACTIVE 的单机局限——
+# gunicorn 多 worker 下任意 worker 均可查询进度、识别"已有 running 同步"。
+# ---------------------------------------------------------------------
+class SyncRun(Base):
+    __tablename__ = "sync_runs"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    owner_user_id: Mapped[str] = mapped_column(String(64), index=True, nullable=False)
+    # 幂等键: 同 owner 的活跃 running 行复用其 sync_id
+    sync_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    # owned | shared | ingest
+    source: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    # running / done / failed
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    total: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    current: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    synced: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    skipped: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    message: Mapped[Optional[str]] = mapped_column(String(256), nullable=True)
+    error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now)
+    updated_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, onupdate=_now)
+
+    __table_args__ = (
+        Index("ix_sync_owner_status", "owner_user_id", "status"),
+        UniqueConstraint("owner_user_id", "sync_id", name="uq_sync_owner_sync"),
+    )

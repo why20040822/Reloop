@@ -32,6 +32,7 @@ class StructuringService:
         talent: dict,
         source_id: Optional[str] = None,
         commit: bool = True,
+        resume_embedding: Optional[list] = None,
     ) -> TalentProfile:
         text = talent.get("summary") or ""
 
@@ -59,7 +60,8 @@ class StructuringService:
             tendency = None
 
         # ---- 4. 画像文本向量 ----
-        embedding = llm_service.embed(text)
+        # R6(2026-08-28): 批量同步预计算好的向量直接用, 避免逐人网络往返
+        embedding = resume_embedding if resume_embedding is not None else llm_service.embed(text)
 
         # ---- 5. 落库 ----
         sid = source_id or talent.get("source_id") or None
