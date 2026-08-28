@@ -360,3 +360,19 @@ def test_jd_analysis_rejects_whitespace_scalar_and_list_item():
     blank_list_item["required_skills"] = ["产品规划", "  "]
     with pytest.raises(ValidationError):
         JDAnalysis.model_validate(blank_list_item)
+
+
+def test_jd_analysis_coerces_llm_type_flips():
+    """2026-08-28 线上实锤: step 模型偶发标量/列表类型翻转, 不应判死解析。"""
+    flipped = copy.deepcopy(VALID_ANALYSIS)
+    flipped["education"] = ["本科及以上学历"]          # 标量字段给了列表
+    flipped["language_requirements"] = "未提供"        # 列表字段给了字符串
+    flipped["salary_range"] = None                    # 标量缺失
+    flipped["team_size"] = ("10人以内",)               # 元组
+
+    analysis = JDAnalysis.model_validate(flipped)
+
+    assert analysis.education == "本科及以上学历"
+    assert analysis.language_requirements == ["未提供"]
+    assert analysis.salary_range == "未提供"
+    assert analysis.team_size == "10人以内"

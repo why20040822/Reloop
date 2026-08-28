@@ -1,12 +1,31 @@
 """Validated contracts for raw and structured job descriptions."""
 
+import re
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
-class JDAnalysis(BaseModel):
-    """The complete, displayable structure returned by the JD parser."""
+_SCALAR_FIELDS = (
+    "title", "summary", "experience", "education", "location",
+    "salary_range", "team_size", "reporting_line",
+)
+_LIST_FIELDS = (
+    "responsibilities", "required_skills", "preferred_skills",
+    "industry_keywords", "language_requirements",
+)
 
-    model_config = ConfigDict(extra="forbid", strict=True)
+
+class JDAnalysis(BaseModel):
+    """The complete, displayable structure returned by the JD parser.
+
+    2026-08-28 实测修复: step 模型偶发"类型翻转"——标量字段返回列表
+    (education -> ["本科及以上学历"])、列表字段返回字符串
+    (language_requirements -> "未提供")。strict 校验直接判死, 线上 2/3 概率失败。
+    这里加 mode="before" 类型矫正(标量取列表拼接/列表按分隔符拆分), 空值校验
+    仍由原 after 校验器负责(空白照样报错)。
+    """
+
+    model_config = ConfigDict(extra="ignore", strict=True)
 
     title: str = Field(min_length=1)
     summary: str = Field(min_length=1)
@@ -21,6 +40,30 @@ class JDAnalysis(BaseModel):
     team_size: str = Field(min_length=1)
     reporting_line: str = Field(min_length=1)
     language_requirements: list[str] = Field(min_length=1)
+
+    @field_validator(*_SCALAR_FIELDS, mode="before")
+    @classmethod
+    def coerce_scalar_type(cls, value):
+        """标量字段类型矫正: list/tuple/set -> 取非空项拼接; None -> 未提供。"""
+        if isinstance(value, (list, tuple, set)):
+            parts = [str(v).strip() for v in value if str(v).strip()]
+            return "、".join(parts) if parts else "未提供"
+        if value is None:
+            return "未提供"
+        return value
+
+    @field_validator(*_LIST_FIELDS, mode="before")
+    @classmethod
+    def coerce_list_type(cls, value):
+        """列表字段类型矫正: str -> 按常见分隔符拆分; tuple/set -> list; None -> 未提供。"""
+        if isinstance(value, str):
+            parts = [p.strip() for p in re.split(r"[、，,;；/\n]+", value) if p.strip()]
+            return parts or ["未提供"]
+        if value is None:
+            return ["未提供"]
+        if isinstance(value, (tuple, set)):
+            return list(value)
+        return value
 
     @field_validator(
         "title",

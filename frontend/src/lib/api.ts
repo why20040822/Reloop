@@ -114,7 +114,7 @@ export const config = {
 
 function isMock() { return config.read().mode === "mock"; }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, timeoutMs = 15000): Promise<T> {
   const auth = config.auth();
   const headers: Record<string, string> = { "Content-Type": "application/json", ...(init.headers as Record<string, string> || {}) };
   if (auth?.token) headers["X-Auth-Token"] = auth.token;
@@ -122,7 +122,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   let response: Response;
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), 15000);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   try {
     response = await fetch(apiBase() + path, { ...init, headers, signal: init.signal || controller.signal });
   } catch (error) {
@@ -187,7 +187,8 @@ export const api = {
   async listPositions() { return isMock() ? mockPositions.filter((item) => item.is_active) : request<Position[]>("/positions"); },
   async parseJd(jdText: string) {
     if (isMock()) return { title: "待确认岗位", summary: jdText.trim(), responsibilities: ["根据 JD 执行岗位职责"], required_skills: ["待确认"], preferred_skills: ["待确认"], experience: "待确认", education: "待确认", location: "待确认", industry_keywords: ["待确认"], salary_range: "待确认", team_size: "待确认", reporting_line: "待确认", language_requirements: ["中文"] } satisfies JDAnalysis;
-    return request<JDAnalysis>("/positions/parse-jd", { method: "POST", body: JSON.stringify({ jd_text: jdText }) });
+    // JD 解析走推理模型, 实测 10~18s+ —— 前端超时放宽到 60s(默认 15s 会掐断)
+    return request<JDAnalysis>("/positions/parse-jd", { method: "POST", body: JSON.stringify({ jd_text: jdText }) }, 60000);
   },
   async setPosition(body: Pick<Position, "position_name" | "jd_text" | "jd_analysis">) {
     if (isMock()) {
