@@ -119,3 +119,94 @@ def test_batch_match_prompt_contains_structured_skills():
         position_name="后端", jd_text="jd",
         candidates="1. 张三", skills_block="【技能】python\n\n")
     assert "【技能】python" in prompt
+
+
+# ---------- 算法护栏: v2 默认 / 自检回退 v1 / 开关手动切换 ----------
+
+def test_rank_dispatch_v2_by_default(monkeypatch):
+    """默认 v2: match_detail 存在(覆盖率命中清单), 走解析特征。"""
+    from reloop.modules.recommend.engine import recommend_engine
+    assert recommend_engine is not None
+    from reloop.services import recommend_service as rs
+    eng = rs.recommend_engine
+    db, owner, pos, talents = _fixture_pool()
+    ranked = eng._rank(db, owner, talents, pos, use_llm=False)
+    assert ranked, "应有排序结果"
+    top = ranked[0].breakdown
+    assert top.match_detail is not None, "v2 应携带 match_detail"
+    assert "skill_hits" in (top.match_detail or {})
+
+
+def test_rank_fallback_on_v2_crash(monkeypatch):
+    """v2 抛异常 -> 自动回退 v1: 仍出结果, 但无 match_detail。"""
+    from reloop.services import recommend_service as rs
+    eng = rs.recommend_engine
+    monkeypatch.setattr(rs, "build_jd_features",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("v2 boom")))
+    db, owner, pos, talents = _fixture_pool()
+    ranked = eng._rank(db, owner, talents, pos, use_llm=False)
+    assert ranked, "v2 崩溃后 v1 兜底仍应出结果"
+    assert all(r.breakdown.match_detail is None for r in ranked), "v1 无 match_detail"
+
+
+def test_rank_fallback_on_selfcheck_fail(monkeypatch):
+    """v2 产出越界分 -> 自检拦截 -> 回退 v1。"""
+    from reloop.services import recommend_service as rs
+    eng = rs.recommend_engine
+
+    def bad_v2(*a, **k):
+        return [(999, rs.FactorScores(activity=0.5, match=7.0))]
+    monkeypatch.setattr(eng, "_rank_v2", bad_v2)
+    db, owner, pos, talents = _fixture_pool()
+    ranked = eng._rank(db, owner, talents, pos, use_llm=False)
+    assert ranked and ranked[0].breakdown.match <= 1.0, "自检拦截后应由 v1 兜底"
+    assert all(r.breakdown.match_detail is None for r in ranked)
+
+
+def test_rank_flag_off_uses_v1(monkeypatch):
+    """BRAINX_MATCH_ALGO_V2=False -> 直接走 v1, 不进 v2。"""
+    from reloop.services import recommend_service as rs
+    eng = rs.recommend_engine
+    monkeypatch.setattr(rs.settings, "match_algo_v2", False)
+    called = {"v2": False}
+
+    def spy_v2(*a, **k):
+        called["v2"] = True
+        return []
+    monkeypatch.setattr(eng, "_rank_v2", spy_v2)
+    db, owner, pos, talents = _fixture_pool()
+    ranked = eng._rank(db, owner, talents, pos, use_llm=False)
+    assert not called["v2"], "开关关闭时不应进 v2"
+    assert ranked and all(r.breakdown.match_detail is None for r in ranked)
+
+
+def _fixture_pool():
+    """最小人才池 + 带解析产物的岗位(SQLite 内存库, 离线)。"""
+    from reloop.db.engine import SessionLocal, Base, engine as _engine
+    from reloop.db.models import Position, TalentProfile, User
+    Base.metadata.create_all(_engine)
+    db = SessionLocal()
+    owner = "guard_test_owner"
+    if db.query(User).filter(User.user_id == owner).first() is None:
+        db.add(User(user_id=owner)); db.commit()
+    for r in db.query(TalentProfile).filter(TalentProfile.owner_user_id == owner).all():
+        db.delete(r)
+    for r in db.query(Position).filter(Position.owner_user_id == owner).all():
+        db.delete(r)
+    db.commit()
+    rows = [
+        TalentProfile(owner_user_id=owner, name="甲", position="后端开发",
+                      skills=["python", "kafka"], work_years=4.0, education="本科"),
+        TalentProfile(owner_user_id=owner, name="乙", position="运营",
+                      skills=["新媒体"], work_years=1.0, education="大专"),
+    ]
+    db.add_all(rows)
+    db.add(Position(owner_user_id=owner, position_name="高级后端开发工程师",
+                    jd_text="负责服务端研发, 精通 Python",
+                    jd_analysis={"required_skills": ["Python", "SQL"],
+                                 "preferred_skills": [], "experience": "3年",
+                                 "education": "本科"}))
+    db.commit()
+    talents = db.query(TalentProfile).filter(TalentProfile.owner_user_id == owner).all()
+    pos = db.query(Position).filter(Position.owner_user_id == owner).first()
+    return db, owner, pos, talents

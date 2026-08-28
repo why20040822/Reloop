@@ -180,10 +180,27 @@ def test_invalid_session_token_does_not_silently_become_guest(monkeypatch):
 
 
 def test_async_sync_idempotent_for_same_owner_and_reports_synced_count():
-    """R6(2026-08-28) 新语义: 同 owner 已有 running 同步时, 重复触发必须复用同一 sync_id。"""
-    with patch.object(talent_sync_service, "sync_for_user", return_value=3):
+    """R6(2026-08-28) 新语义: 同 owner 已有 running 同步时, 重复触发必须复用同一 sync_id。
+
+    时序确定性修复(2026-08-28 夜): 原 mock 瞬间返回, 首个同步可能在第二次触发前
+    就写完 done, 复用断言变成赌毫秒窗口(实测连续失败)。改为用 Event 把首个同步
+    阻塞到第二次触发之后 —— 断言本身一字未动。
+    """
+    import threading
+
+    release = threading.Event()
+    started = threading.Event()
+
+    def slow_sync(owner_user_id, **kwargs):
+        started.set()
+        release.wait(timeout=5)
+        return 3
+
+    with patch.object(talent_sync_service, "sync_for_user", side_effect=slow_sync):
         first = talent_sync_service.sync_for_user_async("fs_sync_test")
+        assert started.wait(timeout=2), "首个同步应已开始并处于 running"
         second = talent_sync_service.sync_for_user_async("fs_sync_test")
+        release.set()
 
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:

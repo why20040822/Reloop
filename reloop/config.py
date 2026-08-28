@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     # 同 owner 两次成功同步的最小间隔(秒), 防全量重拉 + LLM 费用放大
     sync_min_interval_seconds: int = 600
 
+    # ---------- 匹配算法版本护栏(框架改造① 2026-08-28) ----------
+    # True=v2 新算法(jd_analysis 解析特征直通+覆盖率+命中清单, 默认),
+    # 每次出结果过结构自检, 自检不过/抛异常自动回退 v1(旧: 原文分词+Jaccard+正则)。
+    # 出问题可置 False 一键切回旧算法, 无需回滚代码。
+    match_algo_v2: bool = True
+
     # ---------- 评分权重 (双因子加权乘法模型: 活跃度 + 岗位匹配度) ----------
     score_w_activity: float = 0.3
     score_w_match: float = 0.4

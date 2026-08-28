@@ -593,12 +593,54 @@ class RecommendEngine:
               talents: list[TalentProfile], pos: Position,
               use_llm: bool = True, sort_by: str = "match",
               w_activity: Optional[float] = None, w_match: Optional[float] = None):
-        """精算: 双因子(活跃度 + 岗位匹配度)。
+        """精算调度器(护栏, 2026-08-28): v2 新算法默认; 结构自检不过/抛异常
+        自动回退 v1 旧算法。BRAINX_MATCH_ALGO_V2=False 一键手动切回 v1。"""
+        if settings.match_algo_v2:
+            try:
+                candidates = self._rank_v2(
+                    db, owner, talents, pos, use_llm, sort_by, w_activity, w_match)
+                ok, reason = self._self_check_v2(candidates, talents)
+                if not ok:
+                    raise ValueError(f"v2 结构自检未过: {reason}")
+                return rank_candidates(
+                    candidates, sort_by=sort_by,
+                    w_activity=w_activity, w_match=w_match)
+            except Exception:
+                logger.exception(
+                    "[rank] v2 自检未过/异常, 自动回退 v1 旧算法 (pos=%s)",
+                    pos.position_name)
+        return rank_candidates(
+            self._rank_v1(db, owner, talents, pos, use_llm, sort_by,
+                          w_activity, w_match),
+            sort_by=sort_by, w_activity=w_activity, w_match=w_match)
 
-        use_llm=False(快速初筛): 匹配度走结构化降级, 不调 LLM。
-        sort_by: "activity" | "match" | "custom"
-        w_activity / w_match: custom 模式下的权重(和应为 1)。
-        """
+    @staticmethod
+    def _self_check_v2(candidates, talents) -> tuple[bool, str]:
+        """v2 出结果后的结构自检(不调 LLM, 零成本): 分值越界/结果数异常/
+        维度明细非法即判失败, 由调度器回退 v1。"""
+        import math
+
+        if talents and not candidates:
+            return False, "人才池非空但结果为空"
+        if len(candidates) != len(talents):
+            return False, f"结果数 {len(candidates)} != 人才数 {len(talents)}"
+        for tid, fs in candidates:
+            for label, v in (("match", fs.match), ("activity", fs.activity)):
+                if v is None or not math.isfinite(v) or not (0.0 <= v <= 1.0):
+                    return False, f"talent={tid} {label} 越界: {v}"
+            md = fs.match_detail or {}
+            for k, v in (md.get("dims") or {}).items():
+                if v is not None and (not math.isfinite(v) or not (0.0 <= v <= 1.0)):
+                    return False, f"talent={tid} 维度 {k} 越界: {v}"
+        return True, "ok"
+
+    def _rank_v2(self, db: Session, owner: str,
+                 talents: list[TalentProfile], pos: Position,
+                 use_llm: bool = True, sort_by: str = "match",
+                 w_activity: Optional[float] = None,
+                 w_match: Optional[float] = None):
+        """v2 新算法(改造①): jd_analysis 解析特征直通 + 覆盖率 skill 维 +
+        命中清单。返回 candidates(未排序), 排序由调度器统一做。"""
         now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
         interactions_by_talent = self._load_interactions(db, owner, talents)
 
@@ -717,7 +759,100 @@ class RecommendEngine:
                 } if detail else None,
             )
             candidates.append((t.id, fs))
-        return rank_candidates(candidates, sort_by=sort_by, w_activity=w_activity, w_match=w_match)
+        return candidates
+
+    def _rank_v1(self, db: Session, owner: str,
+                 talents: list[TalentProfile], pos: Position,
+                 use_llm: bool = True, sort_by: str = "match",
+                 w_activity: Optional[float] = None,
+                 w_match: Optional[float] = None):
+        """v1 旧算法(兜底, 行为=改造①前): 原文分词关键词 + Jaccard skill 维 +
+        正则扫原文抽年限/学历; 不输出 match_detail。"""
+        now = dt.datetime.now(dt.timezone.utc).replace(tzinfo=None)
+        interactions_by_talent = self._load_interactions(db, owner, talents)
+
+        act_norm: dict[int, float] = {}
+        act_status: dict[int, str] = {}
+        for t in talents:
+            its = interactions_by_talent.get(t.id, [])
+            events = factors.build_activity_events(t.last_active_at, t.resume_updated_at, its)
+            days = factors.days_since_latest_event(events, now=now)
+            if days is None:
+                status = "unknown"
+            elif days > settings.activity_inactive_days:
+                status = "inactive"
+            else:
+                status = "active"
+            act_status[t.id] = status
+            score = factors.absolute_activity(days)
+            if status == "inactive":
+                score = max(0.0, score * settings.activity_gate_penalty)
+            act_norm[t.id] = score
+
+        jd_text = pos.jd_text or pos.position_name
+        if use_llm:
+            jd_emb = pos.jd_embedding or llm_service.embed(jd_text)
+        else:
+            jd_emb = pos.jd_embedding or _fallback_embed(jd_text)
+        jd_kws = self._extract_keywords(pos)
+
+        title_sim_map: dict[str, float] = {}
+        if use_llm and pos.position_name:
+            uniq_positions = [p for p in {t.position for t in talents if t.position}]
+            title_sim_map = llm_service.title_similarity(
+                pos.position_name, uniq_positions)
+
+        structured_matches: dict[int, float] = {}
+        for t in talents:
+            structured_matches[t.id] = factors.match_score_structured(
+                position_name=pos.position_name,
+                jd_text=pos.jd_text,
+                jd_keywords=jd_kws,
+                talent_position=t.position,
+                talent_skills=t.skills or [],
+                talent_tags=t.tags or [],
+                talent_work_years=t.work_years,
+                talent_education=t.education,
+                jd_embedding=jd_emb,
+                resume_embedding=t.resume_embedding or [],
+                title_semantic=title_sim_map.get(t.position) if t.position in title_sim_map else None,
+            )
+
+        llm_match_map: dict[int, float] = {}
+        if use_llm:
+            top_by_struct = sorted(structured_matches.items(), key=lambda x: x[1], reverse=True)[:30]
+            candidate_infos = []
+            for tid, _ in top_by_struct:
+                t = db.get(TalentProfile, tid)
+                if t is None:
+                    continue
+                candidate_infos.append({
+                    "idx": tid,
+                    "name": t.name,
+                    "position": t.position,
+                    "company": t.company,
+                    "skills": t.skills or [],
+                    "work_years": t.work_years,
+                    "education": t.education,
+                })
+            if candidate_infos:
+                llm_results = llm_service.batch_match_scores(
+                    pos.position_name, jd_text or "", candidate_infos)
+                for tid, score in llm_results.items():
+                    llm_match_map[tid] = score
+
+        candidates = []
+        for t in talents:
+            struct_score = structured_matches.get(t.id, 0.5)
+            llm_score = llm_match_map.get(t.id)
+            match = (0.6 * llm_score + 0.4 * struct_score
+                     if llm_score is not None else struct_score)
+            candidates.append((t.id, FactorScores(
+                activity=act_norm.get(t.id, 0.0),
+                match=max(0.0, min(1.0, match)),
+                activity_status=act_status.get(t.id, "unknown"),
+            )))
+        return candidates
 
     @staticmethod
     def _load_interactions(db: Session, owner: str,
