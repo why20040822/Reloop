@@ -12,6 +12,7 @@ export type Talent = {
   last_active_at?: string | null;
   tags?: string[] | null;
   notes?: string | null;
+  resume_text?: string | null;
 };
 export type JDAnalysis = {
   title: string;

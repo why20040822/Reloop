@@ -22,7 +22,8 @@ router = APIRouter(prefix="/talents", tags=["人才库"])
 
 # slim 列表模式下置空的重量级字段(详情页 /talents/{id} 不受影响)
 _SLIM_HEAVY_FIELDS = ("work_history", "projects", "delivery_records",
-                      "education_history", "notes", "stability", "resume_text_preview")
+                      "education_history", "notes", "stability", "resume_text_preview",
+                      "resume_text")
 
 
 @router.get("", response_model=list[TalentOut], summary="列出我的人才库")

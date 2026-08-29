@@ -39,6 +39,8 @@ class TalentOut(BaseModel):
     contact_status: Optional[str] = None
     updated_at: Optional[dt.datetime] = None
     resume_text_preview: Optional[str] = None
+    # 完整简历结构化文本(仅详情接口返回; 列表 slim 模式置空)
+    resume_text: Optional[str] = None
 
     class Config:
         from_attributes = True
