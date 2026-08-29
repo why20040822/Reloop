@@ -27,7 +27,10 @@ def build_jd_messages(jd_text: str) -> list[dict[str, str]]:
                 "responsibilities、required_skills、preferred_skills、experience、education、"
                 "location、industry_keywords、salary_range、team_size、reporting_line、"
                 "language_requirements。无法从 JD 得知的标量字段使用“未提供”，"
-                "列表字段使用 [“未提供”]。所有列表字段必须是非空字符串数组。"
+                "列表字段使用 [“未提供”]。所有列表字段必须是非空字符串数组。\n"
+                "重要: required_skills 与 preferred_skills 必须是【原子化短技能词】"
+                "(如 Python、SQL、社群运营、Google Analytics), 每项不超过 12 字, "
+                "禁止输出完整句子或要求描述 —— 下游算法按逐项技能做覆盖率匹配。"
             ),
         },
         {"role": "user", "content": jd_text},
