@@ -309,3 +309,23 @@ class SyncRun(Base):
         Index("ix_sync_owner_status", "owner_user_id", "status"),
         UniqueConstraint("owner_user_id", "sync_id", name="uq_sync_owner_sync"),
     )
+
+
+# ---------------------------------------------------------------------
+# 公司共享池快照 (v2.2 2026-08-30): 撞库查询的持久化存储。
+# 替代 v2.1 的进程内 _snapshot(重启即失/多 worker 各存一份)——
+# 整表同批替换, 任意进程/重启后立即可读; TTL 由 MAX(fetched_at) 判定。
+# 【隔离约定例外】本表全公司共享一份(公共只读数据), 不带 owner_user_id。
+# ---------------------------------------------------------------------
+class CompanyPoolSnapshot(Base):
+    __tablename__ = "company_pool_snapshot"
+
+    id: Mapped[int] = mapped_column(BigIntPK, primary_key=True, autoincrement=True)
+    # TTC 人才 ID(共享池视角), 撞库连接键; 一人一行唯一约束兜底
+    source_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    # 快照轻字段(与 TalentOut 同名: notes/seek_status/contact_status/company/
+    # position/current_salary/expected_salary/base_location/skills/
+    # last_active_at/resume_updated_at/work_years/education)
+    payload: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # 本行最近从共享池刷新的时间(整表同批刷新, 取 MAX 即快照版本)
+    fetched_at: Mapped[dt.datetime] = mapped_column(DateTime, default=_now, index=True)

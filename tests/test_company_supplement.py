@@ -54,8 +54,16 @@ def _seed():
 
 
 def _reset_snapshot():
-    cp._snapshot = {"fetched_at": None, "by_sid": {}, "total": 0}
+    # v2.2: 快照持久化在 company_pool_snapshot 表, 重置需清表 + 清内存视图
+    from reloop.db.models import CompanyPoolSnapshot
+    cp._mem_view = {"fetched_at": None, "by_sid": {}, "total": 0}
     call_counter["n"] = 0
+    db = SessionLocal()
+    try:
+        db.query(CompanyPoolSnapshot).delete()
+        db.commit()
+    finally:
+        db.close()
 
 
 @pytest.fixture()
