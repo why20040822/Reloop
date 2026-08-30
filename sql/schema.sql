@@ -114,3 +114,13 @@ CREATE TABLE IF NOT EXISTS recommend_runs (
 -- 已有环境升级: users 表补 TTC 绑定列(幂等, 报错可忽略)
 -- ALTER TABLE users ADD COLUMN ttc_auth_token TEXT NULL,
 --     ADD COLUMN ttc_bound_name VARCHAR(128) NULL;
+
+-- 公司共享池快照 (v2.2 2026-08-30): 撞库查询的持久化存储, 整表同批替换。
+-- 隔离约定例外: 全公司共享一份(公共只读), 不带 owner_user_id。
+CREATE TABLE IF NOT EXISTS company_pool_snapshot (
+    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    source_id   VARCHAR(64) NOT NULL UNIQUE COMMENT 'TTC 人才ID(共享池视角), 撞库连接键',
+    payload     JSON        NULL COMMENT '快照轻字段(与 TalentOut 同名: notes/seek_status/薪资/活跃时间等)',
+    fetched_at  DATETIME    DEFAULT CURRENT_TIMESTAMP COMMENT '本行最近从共享池刷新的时间(整表同批)',
+    INDEX ix_company_pool_fetched (fetched_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
