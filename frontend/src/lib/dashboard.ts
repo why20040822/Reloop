@@ -23,14 +23,17 @@ export function relativeActivity(value?: string | null) {
   return `${Math.floor(minutes / 1440)} 天前`;
 }
 
-export function buildActivityRows(talents: Talent[]): TalentFocusRow[] {
+export function buildActivityRows(talents: Talent[], windowDays = 7): TalentFocusRow[] {
+  // 「近 N 天活跃」阀门: 只保留 last_active_at 在窗口内的人才。
+  // 无活跃时间/时间非法 -> 不算活跃, 不再兜底显示(否则全库都被算作"活跃")。
+  const cutoff = Date.now() - windowDays * 86400_000;
   return talents
     .map((talent, index) => ({ talent, index, activityTime: validActivityTime(talent.last_active_at) }))
-    .sort((left, right) => (right.activityTime ?? Number.NEGATIVE_INFINITY) - (left.activityTime ?? Number.NEGATIVE_INFINITY) || left.index - right.index)
+    .filter((row): row is { talent: Talent; index: number; activityTime: number } =>
+      row.activityTime != null && row.activityTime >= cutoff)
+    .sort((left, right) => right.activityTime - left.activityTime || left.index - right.index)
     .map(({ talent }) => {
-      const signal = validActivityTime(talent.last_active_at) == null
-        ? "已进入人才库，建议查看完整资料。"
-        : `最近 ${relativeActivity(talent.last_active_at)} 有活跃信号`;
+      const signal = `最近 ${relativeActivity(talent.last_active_at)} 有活跃信号`;
       return { talent, score: talent.value_score, signal, reason: signal, activeAt: talent.last_active_at };
     });
 }

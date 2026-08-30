@@ -75,8 +75,21 @@ app.include_router(recommend.router)
 # 前后端合并部署: 后端直接伺服 webapp/ 静态前端 (同源, 免 CORS)。
 # 必须放在 API 路由之后挂载, 这样 /docs、/talents、/recommend 等接口优先匹配,
 # 其余路径(含 "/")回退到 SPA 入口 index.html (hash 路由, 无需服务端路由)。
+# 缓存策略(2026-08-29): index.html 必须 no-cache——浏览器缓存旧 index.html 会指向
+# 已被替换的旧 JS hash, 导致发版后用户看不到新功能; 带 hash 的 /assets 可长缓存。
 _WEBAPP_DIR = settings.webapp_path
 if settings.serve_webapp and _WEBAPP_DIR.is_dir():
+
+    @app.middleware("http")
+    async def _static_cache_headers(request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/assets/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path == "/" or path.endswith(".html"):
+            response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
     app.mount("/", StaticFiles(directory=str(_WEBAPP_DIR), html=True), name="webapp")
     logger.info("[startup] serving webapp from %s", _WEBAPP_DIR)
 else:
